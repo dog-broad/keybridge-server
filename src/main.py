@@ -7,15 +7,15 @@ from typing import Any, Dict, Set
 import websockets
 from websockets.server import WebSocketServer
 from websockets.legacy.server import WebSocketServerProtocol
-from pynput.keyboard import Controller, Key # type: ignore
 from utils.logger import setup_logger
+from utils.message_handler import MessageHandler
 from config import SERVER_CONFIG
 
 # Initialize logger
 logger = setup_logger()
 
-# Initialize keyboard controller
-keyboard = Controller()
+# Initialize message handler
+message_handler = MessageHandler()
 
 # Store active connections
 active_connections: Set[WebSocketServerProtocol] = set()
@@ -23,7 +23,6 @@ active_connections: Set[WebSocketServerProtocol] = set()
 async def handle_connection(websocket: WebSocketServerProtocol) -> None:
     """
     Handle incoming WebSocket connections and process messages.
-    Implements echo functionality and keyboard control.
 
     Args:
         websocket: WebSocket connection object
@@ -35,34 +34,18 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
     try:
         async for message in websocket:
             try:
-                # Parse the message as JSON
-                data: Dict[str, Any] = json.loads(message)
-                logger.debug(f"Received message: {data}")
+                # Process the message using our message handler
+                response = message_handler.handle_message(message)
+                logger.debug(f"Message response: {response}")
 
-                # Echo the message back to the client
-                await websocket.send(json.dumps({
-                    "type": "echo",
-                    "original": data
-                }))
+                # Send the response back to the client
+                await websocket.send(json.dumps(response))
 
-                # Process the message based on type
-                if data['type'] == 'key':
-                    logger.debug(f"Processing key: {data['value']}")
-                    keyboard.type(data['value'])
-                else:
-                    logger.warning(f"Unknown message type: {data['type']}")
-
-            except json.JSONDecodeError:
-                logger.error(f"Invalid JSON received: {message}")
-                await websocket.send(json.dumps({
-                    "type": "error",
-                    "message": "Invalid JSON format"
-                }))
             except Exception as e:
                 logger.error(f"Error processing message: {str(e)}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 await websocket.send(json.dumps({
-                    "type": "error",
+                    "status": "error",
                     "message": str(e)
                 }))
 
