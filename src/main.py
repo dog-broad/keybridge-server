@@ -9,16 +9,18 @@ from websockets.server import WebSocketServer
 from websockets.legacy.server import WebSocketServerProtocol
 from utils.logger import setup_logger
 from utils.message_handler import MessageHandler
+from utils.connection_manager import ConnectionManager
 from config import SERVER_CONFIG
 
 # Initialize logger
 logger = setup_logger()
 
-# Initialize message handler
+# Initialize message handler and connection manager
 message_handler = MessageHandler()
-
-# Store active connections
-active_connections: Set[WebSocketServerProtocol] = set()
+connection_manager = ConnectionManager(
+    idle_timeout=SERVER_CONFIG.get('idle_timeout', 60),
+    max_connections=SERVER_CONFIG.get('max_connections', 10)
+)
 
 async def handle_connection(websocket: WebSocketServerProtocol) -> None:
     """
@@ -29,11 +31,22 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
     """
     client_address = websocket.remote_address
     logger.info(f"New connection from {client_address}")
-    active_connections.add(websocket)
-
+    
     try:
+        # Add connection to manager and get session ID
+        session_id = await connection_manager.add_connection(websocket)
+        
         async for message in websocket:
             try:
+                # Update last activity timestamp
+                connection_manager.update_activity(websocket)
+                
+                # Handle ping messages
+                if isinstance(message, bytes) and message.startswith(b'\x89'):  # WebSocket ping frame
+                    logger.debug(f"Received ping from {client_address}")
+                    await websocket.pong(message[1:] if len(message) > 1 else b'')
+                    continue
+                
                 # Process the message using our message handler
                 response = message_handler.handle_message(message)
                 logger.debug(f"Message response: {response}")
@@ -49,13 +62,19 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
                     "message": str(e)
                 }))
 
+    except ConnectionRefusedError as e:
+        logger.warning(f"Connection refused for {client_address}: {str(e)}")
+        try:
+            await websocket.close(1008, str(e))  # Policy Violation
+        except Exception:
+            pass
     except websockets.exceptions.ConnectionClosed:
         logger.info(f"Connection closed for {client_address}")
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
     finally:
-        active_connections.remove(websocket)
+        await connection_manager.remove_connection(websocket)
 
 async def shutdown(server: WebSocketServer) -> None:
     """
@@ -66,13 +85,8 @@ async def shutdown(server: WebSocketServer) -> None:
     """
     logger.info("Initiating graceful shutdown...")
     
-    # Close all active connections
-    for websocket in active_connections:
-        try:
-            await websocket.close(1000, "Server shutting down")
-        except Exception as e:
-            logger.error(f"Error closing connection: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+    # Stop the connection manager
+    await connection_manager.stop()
     
     # Close the server
     server.close()
@@ -89,6 +103,9 @@ async def main() -> None:
     logger.info(f"Starting WebSocket server on {host}:{port}")
 
     try:
+        # Start the connection manager
+        await connection_manager.start()
+        
         # Create server with ping settings
         server = await websockets.serve(
             handle_connection,

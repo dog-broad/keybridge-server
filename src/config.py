@@ -10,11 +10,13 @@ load_dotenv()
 
 # Server configuration
 SERVER_CONFIG: Dict[str, Any] = {
-    'host': os.getenv('SERVER_HOST', 'localhost'),
-    'port': int(os.getenv('SERVER_PORT', '8080')),
+    'host': os.getenv('SERVER_HOST', '0.0.0.0'),  # Listen on all available network interfaces
+    'port': int(os.getenv('SERVER_PORT', 8765)),  # Default WebSocket port
     'allowed_origins': os.getenv('ALLOWED_ORIGINS', '*').split(','),
-    'ping_interval': int(os.getenv('PING_INTERVAL', '20')),  # seconds
-    'ping_timeout': int(os.getenv('PING_TIMEOUT', '20')),    # seconds
+    'ping_interval': int(os.getenv('PING_INTERVAL', 20)),  # Send ping every 20 seconds
+    'ping_timeout': int(os.getenv('PING_TIMEOUT', 20)),    # Wait 20 seconds for pong response
+    'idle_timeout': int(os.getenv('IDLE_TIMEOUT', 60)),    # Close idle connections after 1 minute
+    'max_connections': int(os.getenv('MAX_CONNECTIONS', 10)),  # Maximum concurrent connections
 }
 
 # Logging configuration
