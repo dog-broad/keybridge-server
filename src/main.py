@@ -10,6 +10,7 @@ from websockets.legacy.server import WebSocketServerProtocol
 from utils.logger import setup_logger
 from utils.message_handler import MessageHandler
 from utils.connection_manager import ConnectionManager
+from utils.qr_utils import generate_connection_qr, generate_ascii_qr
 from config import SERVER_CONFIG
 
 # Initialize logger
@@ -103,6 +104,17 @@ async def main() -> None:
     logger.info(f"Starting WebSocket server on {host}:{port}")
 
     try:
+        # Generate QR code for connection
+        connection_string, qr_path = generate_connection_qr(port)
+        logger.info(f"Generated QR code for connection string: {connection_string}")
+        logger.info(f"QR code saved to: {qr_path}")
+        
+        # Display ASCII QR code in terminal
+        ascii_qr = generate_ascii_qr(port)
+        print("\nASCII QR Code:")
+        print(ascii_qr)
+        print(f"Connection string: {connection_string}")
+        
         # Start the connection manager
         await connection_manager.start()
         
