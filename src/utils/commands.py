@@ -17,6 +17,80 @@ class CommandType(Enum):
     KEY_COMBO = "key_combo" # Press multiple keys in combination
     HOTKEY = "hotkey"      # Execute a hotkey combination
 
+# Key mapping from string names to pynput Key enum values (same as in KeyboardController)
+SUPPORTED_KEYS = {
+    # Navigation keys
+    'backspace': Key.backspace,
+    'tab': Key.tab,
+    'enter': Key.enter,
+    'shift': Key.shift,
+    'ctrl': Key.ctrl,
+    'alt': Key.alt,
+    'space': Key.space,
+    'esc': Key.esc,
+    'escape': Key.esc,
+    
+    # Arrow keys
+    'up': Key.up,
+    'down': Key.down,
+    'left': Key.left,
+    'right': Key.right,
+    
+    # Function keys
+    'f1': Key.f1,
+    'f2': Key.f2,
+    'f3': Key.f3,
+    'f4': Key.f4,
+    'f5': Key.f5,
+    'f6': Key.f6,
+    'f7': Key.f7,
+    'f8': Key.f8,
+    'f9': Key.f9,
+    'f10': Key.f10,
+    'f11': Key.f11,
+    'f12': Key.f12,
+    
+    # Special keys
+    'home': Key.home,
+    'end': Key.end,
+    'page_up': Key.page_up,
+    'page_down': Key.page_down,
+    'insert': Key.insert,
+    'delete': Key.delete,
+    
+    # Modifier keys
+    'cmd': Key.cmd,
+    'command': Key.cmd,
+    'windows': Key.cmd,
+    'win': Key.cmd,
+    
+    # Media keys
+    'media_play_pause': Key.media_play_pause,
+    'media_volume_up': Key.media_volume_up,
+    'media_volume_down': Key.media_volume_down,
+    'media_volume_mute': Key.media_volume_mute,
+    'media_next': Key.media_next,
+    'media_previous': Key.media_previous,
+    
+    # Num lock and scroll lock
+    'num_lock': Key.num_lock,
+    'scroll_lock': Key.scroll_lock,
+    'caps_lock': Key.caps_lock,
+    
+    # Print screen
+    'print_screen': Key.print_screen,
+    'prtsc': Key.print_screen,
+    'prtscr': Key.print_screen,
+    
+    # Pause/Break
+    'pause': Key.pause,
+    'break': Key.pause,
+    
+    # Menu key
+    'menu': Key.menu,
+    'apps': Key.menu,
+}
+
 class CommandValidator:
     """Validates command structure and parameters."""
     
@@ -72,7 +146,12 @@ class CommandValidator:
             raise ValueError("Key command requires a 'key' field")
         if not isinstance(data['key'], str):
             raise ValueError("'key' must be a string")
-        # Additional validation for special keys can be added here
+        
+        # Validate that the key is supported
+        key_name = data['key'].lower().strip()
+        if key_name not in SUPPORTED_KEYS:
+            supported_keys_list = ', '.join(sorted(SUPPORTED_KEYS.keys()))
+            raise ValueError(f"Unsupported key: '{data['key']}'. Supported keys: {supported_keys_list}")
     
     @staticmethod
     def _validate_key_combo_command(data: Dict[str, Any]) -> None:
@@ -83,9 +162,16 @@ class CommandValidator:
             raise ValueError("'keys' must be a list")
         if not data['keys']:
             raise ValueError("'keys' list cannot be empty")
-        for key in data['keys']:
+        
+        # Validate each key in the list
+        for i, key in enumerate(data['keys']):
             if not isinstance(key, str):
-                raise ValueError("All keys must be strings")
+                raise ValueError(f"All keys must be strings. Key at index {i} is {type(key)}")
+            
+            key_name = key.lower().strip()
+            if key_name not in SUPPORTED_KEYS:
+                supported_keys_list = ', '.join(sorted(SUPPORTED_KEYS.keys()))
+                raise ValueError(f"Unsupported key at index {i}: '{key}'. Supported keys: {supported_keys_list}")
     
     @staticmethod
     def _validate_hotkey_command(data: Dict[str, Any]) -> None:
@@ -96,9 +182,16 @@ class CommandValidator:
             raise ValueError("'keys' must be a list")
         if not data['keys']:
             raise ValueError("'keys' list cannot be empty")
-        for key in data['keys']:
+        
+        # Validate each key in the list
+        for i, key in enumerate(data['keys']):
             if not isinstance(key, str):
-                raise ValueError("All keys must be strings")
+                raise ValueError(f"All keys must be strings. Key at index {i} is {type(key)}")
+            
+            key_name = key.lower().strip()
+            if key_name not in SUPPORTED_KEYS:
+                supported_keys_list = ', '.join(sorted(SUPPORTED_KEYS.keys()))
+                raise ValueError(f"Unsupported key at index {i}: '{key}'. Supported keys: {supported_keys_list}")
 
 # Example command formats for documentation
 COMMAND_EXAMPLES = {

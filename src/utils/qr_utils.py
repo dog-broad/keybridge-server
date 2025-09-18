@@ -1,9 +1,17 @@
-import qrcode
+"""
+QR Code Generation Utilities
+
+This module provides utilities for generating QR codes for WebSocket connection strings
+with secure authentication tokens.
+"""
+
+import json
 import os
-from typing import Tuple
+import qrcode
 import socket
 import logging
 import sys
+from typing import Tuple, Optional
 from pathlib import Path
 
 # Add the parent directory to sys.path when running as standalone script
@@ -34,79 +42,172 @@ def get_local_ip() -> str:
         logger.error(f"Failed to get local IP: {e}")
         return "127.0.0.1"  # Fallback to localhost
 
-def generate_connection_qr(port: int, save_path: str = "connection_qr.png") -> Tuple[str, str]:
+def generate_connection_qr(
+    port: int, 
+    security_manager=None,
+    save_path: str = "connection_qr.png"
+) -> Tuple[str, str]:
     """
-    Generate a QR code containing the connection information (IP:port).
+    Generate a QR code containing the WebSocket connection string with authentication token.
     
     Args:
-        port (int): The port number to include in the QR code
-        save_path (str): Path where to save the QR code image
+        port (int): WebSocket server port
+        security_manager: Security manager for token generation (optional)
+        save_path (str): Path to save the QR code image
         
     Returns:
-        Tuple[str, str]: (connection_string, qr_path)
+        Tuple[str, str]: Connection data (JSON string) and QR code image path
     """
-    ip = get_local_ip()
-    connection_string = f"{ip}:{port}"
+    local_ip = get_local_ip()
     
-    # Create QR code instance
+    # Create connection data
+    connection_data = {
+        "version": "2.0",
+        "url": f"ws://{local_ip}:{port}",
+        "protocol": "virtual-keyboard-v2"
+    }
+    
+    # Add authentication token if security manager is provided
+    if security_manager:
+        try:
+            token, expiry = security_manager.generate_connection_token()
+            connection_data["auth"] = {
+                "token": token,
+                "expires": expiry,
+                "type": "bearer"
+            }
+            logger.info("Generated QR code with authentication token")
+        except Exception as e:
+            logger.warning(f"Failed to generate auth token: {e}")
+            logger.info("Generated QR code without authentication (fallback)")
+    else:
+        logger.info("Generated QR code without authentication (legacy mode)")
+    
+    # Convert to JSON string
+    connection_string = json.dumps(connection_data, separators=(',', ':'))
+    
+    # Create QR code
     qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        version=None,  # Auto-determine version based on data
+        error_correction=qrcode.constants.ERROR_CORRECT_M,  # Medium error correction for tokens
         box_size=10,
         border=4,
     )
     
-    # Add data
     qr.add_data(connection_string)
     qr.make(fit=True)
     
-    # Create an image from the QR Code
-    qr_image = qr.make_image(fill_color="black", back_color="white")
+    # Create QR code image
+    img = qr.make_image(fill_color="black", back_color="white")
     
     # Ensure the directory exists
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
     
     # Save the image
-    qr_image.save(save_path)
-    logger.info(f"QR code generated and saved to {save_path}")
+    img.save(save_path)
     
+    logger.info(f"QR code generated and saved to: {save_path}")
     return connection_string, save_path
 
-def generate_ascii_qr(port: int) -> str:
+def generate_ascii_qr(
+    port: int, 
+    security_manager=None
+) -> str:
     """
-    Generate an ASCII representation of the QR code for terminal display.
+    Generate an ASCII QR code for terminal display.
     
     Args:
-        port (int): The port number to include in the QR code
+        port (int): WebSocket server port
+        security_manager: Security manager for token generation (optional)
         
     Returns:
-        str: ASCII representation of the QR code
+        str: ASCII QR code
     """
-    ip = get_local_ip()
-    connection_string = f"{ip}:{port}"
+    local_ip = get_local_ip()
     
-    # Create QR code instance
+    # Create connection data
+    connection_data = {
+        "version": "2.0",
+        "url": f"ws://{local_ip}:{port}",
+        "protocol": "virtual-keyboard-v2"
+    }
+    
+    # Add authentication token if security manager is provided
+    if security_manager:
+        try:
+            token, expiry = security_manager.generate_connection_token()
+            connection_data["auth"] = {
+                "token": token,
+                "expires": expiry,
+                "type": "bearer"
+            }
+        except Exception as e:
+            logger.warning(f"Failed to generate auth token: {e}")
+    
+    # Convert to JSON string
+    connection_string = json.dumps(connection_data, separators=(',', ':'))
+    
+    # Create QR code
     qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        version=None,  # Auto-determine version
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
         box_size=1,
         border=1,
     )
     
-    # Add data
     qr.add_data(connection_string)
     qr.make(fit=True)
     
     # Generate ASCII representation
     ascii_qr = qr.get_matrix()
-    ascii_str = ""
     
+    # Convert to ASCII characters
+    ascii_string = ""
     for row in ascii_qr:
+        line = ""
         for cell in row:
-            ascii_str += "██" if cell else "  "
-        ascii_str += "\n"
+            line += "██" if cell else "  "  # Use double-width characters for better visibility
+        ascii_string += line + "\n"
     
-    return ascii_str
+    return ascii_string
+
+def parse_connection_qr(qr_data: str) -> dict:
+    """
+    Parse connection data from QR code.
+    
+    Args:
+        qr_data: QR code data string
+        
+    Returns:
+        dict: Parsed connection data
+        
+    Raises:
+        ValueError: If QR data is invalid
+    """
+    try:
+        # Try to parse as JSON (new format)
+        data = json.loads(qr_data)
+        if isinstance(data, dict) and "url" in data:
+            return data
+    except json.JSONDecodeError:
+        pass
+    
+    # Try legacy format (plain IP:port or WebSocket URL)
+    if ':' in qr_data:
+        # Handle legacy IP:port format
+        if qr_data.startswith(('ws://', 'wss://')):
+            url = qr_data
+        else:
+            # Convert IP:port to WebSocket URL
+            url = f"ws://{qr_data}"
+        
+        return {
+            "version": "1.0",
+            "url": url,
+            "protocol": "virtual-keyboard-v1"
+        }
+    
+    raise ValueError("Invalid QR code data format")
 
 def regenerate_qr(port: int, output_path: str = "connection_qr.png", show_ascii: bool = False) -> None:
     """
@@ -122,16 +223,16 @@ def regenerate_qr(port: int, output_path: str = "connection_qr.png", show_ascii:
         current_ip = get_local_ip()
         logger.info(f"Current IP address: {current_ip}")
         
-        # Generate new QR code
-        connection_string, qr_path = generate_connection_qr(port, output_path)
+        # Generate new QR code (without security manager for standalone usage)
+        connection_string, qr_path = generate_connection_qr(port, None, output_path)
         logger.info(f"Generated QR code for connection string: {connection_string}")
         logger.info(f"QR code saved to: {qr_path}")
         
         if show_ascii:
-            ascii_qr = generate_ascii_qr(port)
+            ascii_qr = generate_ascii_qr(port, None)
             print("\nASCII QR Code:")
             print(ascii_qr)
-            print(f"Connection string: {connection_string}")
+            print(f"Connection data: {connection_string}")
             
     except Exception as e:
         logger.error(f"Failed to regenerate QR code: {e}")
@@ -152,4 +253,4 @@ if __name__ == "__main__":
     try:
         regenerate_qr(args.port, args.output, args.ascii)
     except Exception as e:
-        sys.exit(1) 
+        sys.exit(1)

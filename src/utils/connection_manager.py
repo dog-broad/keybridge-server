@@ -9,7 +9,7 @@ import asyncio
 import json
 import time
 import uuid
-from typing import Dict, Set, Optional, List
+from typing import Dict, Set, Optional, List, Any
 from websockets.legacy.server import WebSocketServerProtocol
 from .logger import get_logger
 
@@ -92,6 +92,17 @@ class ConnectionManager:
         """
         client_address = websocket.remote_address[0]
         
+        # Log connection details including headers
+        try:
+            headers = {}
+            if hasattr(websocket, 'request') and websocket.request is not None:
+                headers = dict(websocket.request.headers)
+            logger.info(f"New connection attempt from IP: {client_address}")
+            logger.debug(f"Connection headers: {json.dumps(headers, indent=2)}")
+        except Exception as e:
+            logger.warning(f"Could not access request headers: {str(e)}")
+            headers = {}
+        
         if not self._is_connection_allowed(client_address):
             raise ConnectionRefusedError("Connection limit reached or too many rapid reconnections")
         
@@ -100,18 +111,20 @@ class ConnectionManager:
         self.session_ids[websocket] = session_id
         self.last_activity[websocket] = time.time()
         
-        # Record connection in history
-        self.connection_history.append({
+        # Record connection in history with additional details
+        connection_record = {
             'address': client_address,
             'session_id': session_id,
-            'timestamp': time.time()
-        })
+            'timestamp': time.time(),
+            'headers': headers
+        }
+        self.connection_history.append(connection_record)
         
         # Clean up old history entries (older than 1 hour)
         current_time = time.time()
         self.connection_history = [
             conn for conn in self.connection_history
-            if current_time - conn['timestamp'] < 3600
+            if current_time - conn['timestamp'] < 3600  # 1 hour
         ]
         
         # Send connection status to client
@@ -144,6 +157,21 @@ class ConnectionManager:
         """
         if websocket in self.active_connections:
             self.last_activity[websocket] = time.time()
+            logger.debug(f"Updated activity for connection - Session ID: {self.session_ids.get(websocket)}")
+    
+    def extend_idle_timeout(self, websocket: WebSocketServerProtocol, extension_seconds: int = 300) -> None:
+        """
+        Extend the idle timeout for a connection (e.g., when ping is received).
+        
+        Args:
+            websocket: WebSocket connection object
+            extension_seconds (int): Number of seconds to extend the timeout
+        """
+        if websocket in self.active_connections:
+            current_time = time.time()
+            self.last_activity[websocket] = current_time + extension_seconds
+            session_id = self.session_ids.get(websocket)
+            logger.debug(f"Extended idle timeout for connection - Session ID: {session_id}, Extended by {extension_seconds}s")
     
     async def _send_connection_status(self, websocket: WebSocketServerProtocol, status: str, session_id: str) -> None:
         """

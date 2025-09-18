@@ -6,6 +6,7 @@ and execution.
 """
 
 import json
+import time
 from typing import Dict, Any, Optional
 from .logger import get_logger
 from .keyboard_controller import KeyboardController
@@ -68,6 +69,8 @@ class MessageHandler:
                 return self._handle_key_combo_command(data)
             elif command == CommandType.HOTKEY.value:
                 return self._handle_hotkey_command(data)
+            elif command == "ping":
+                return self._handle_ping_command(data)
             else:
                 raise ValueError(f"Unsupported command: {command}")
                 
@@ -178,6 +181,23 @@ class MessageHandler:
             }
         except Exception as e:
             logger.error(f"Error in hotkey command: {str(e)}")
+            return {
+                'status': 'error',
+                'message': str(e)
+            }
+    
+    def _handle_ping_command(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle the 'ping' command for keep-alive."""
+        try:
+            timestamp = data.get('timestamp', 0)
+            return {
+                'status': 'success',
+                'message': 'pong',
+                'timestamp': timestamp,
+                'server_time': time.time()
+            }
+        except Exception as e:
+            logger.error(f"Error in ping command: {str(e)}")
             return {
                 'status': 'error',
                 'message': str(e)

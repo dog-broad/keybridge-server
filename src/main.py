@@ -2,6 +2,7 @@ import asyncio
 import json
 import signal
 import sys
+import time
 import traceback
 from typing import Any, Dict, Set
 import websockets
@@ -11,10 +12,30 @@ from utils.logger import setup_logger
 from utils.message_handler import MessageHandler
 from utils.connection_manager import ConnectionManager
 from utils.qr_utils import generate_connection_qr, generate_ascii_qr
-from config import SERVER_CONFIG
+from utils.security import SecurityManager, RateLimiter
+from config import SERVER_CONFIG, SECURITY_CONFIG, PERFORMANCE_CONFIG
 
 # Initialize logger
 logger = setup_logger()
+
+# Initialize security manager
+security_manager = None
+rate_limiter = None
+if SECURITY_CONFIG.get('enable_authentication', True):
+    security_manager = SecurityManager(
+        secret_key=SECURITY_CONFIG.get('secret_key', 'default-secret-key'),
+        enable_encryption=SECURITY_CONFIG.get('enable_encryption', True)
+    )
+    rate_limiter = RateLimiter(
+        max_requests=SECURITY_CONFIG.get('rate_limit_per_minute', 100),
+        window_minutes=1
+    )
+    security_features = ["Authentication", "Rate limiting"]
+    if SECURITY_CONFIG.get('enable_encryption', True):
+        security_features.append("Encryption")
+    logger.info(f"Security features enabled: {', '.join(security_features)}")
+else:
+    logger.warning("Security features disabled - running in legacy mode")
 
 # Initialize message handler and connection manager
 message_handler = MessageHandler()
@@ -31,14 +52,42 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
         websocket: WebSocket connection object
     """
     client_address = websocket.remote_address
+    client_ip = client_address[0] if client_address else "unknown"
     logger.info(f"New connection from {client_address}")
+    
+    # Track authentication state
+    is_authenticated = not SECURITY_CONFIG.get('enable_authentication', True)
+    auth_attempts = 0
+    client_id = security_manager.hash_client_identifier(client_ip) if security_manager else client_ip
     
     try:
         # Add connection to manager and get session ID
         session_id = await connection_manager.add_connection(websocket)
         
+        # Send initial handshake message
+        handshake_msg = {
+            "type": "handshake",
+            "protocol_version": "2.0",
+            "features": {
+                "authentication": SECURITY_CONFIG.get('enable_authentication', True),
+                "encryption": SECURITY_CONFIG.get('enable_encryption', True),
+                "compression": PERFORMANCE_CONFIG.get('enable_compression', True)
+            },
+            "session_id": session_id
+        }
+        await websocket.send(json.dumps(handshake_msg))
+        
         async for message in websocket:
             try:
+                # Rate limiting check
+                if rate_limiter and not rate_limiter.is_allowed(client_id):
+                    await websocket.send(json.dumps({
+                        "status": "error",
+                        "message": "Rate limit exceeded. Please slow down.",
+                        "code": "RATE_LIMIT_EXCEEDED"
+                    }))
+                    continue
+                
                 # Update last activity timestamp
                 connection_manager.update_activity(websocket)
                 
@@ -48,20 +97,138 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
                     await websocket.pong(message[1:] if len(message) > 1 else b'')
                     continue
                 
+                # Decrypt message if encryption is enabled and client is authenticated
+                # Initial handshake and authentication messages are sent as plain text
+                logger.info(f"Processing message from {client_address} - is_authenticated: {is_authenticated}, encryption_enabled: {security_manager.enable_encryption if security_manager else False}")
+                logger.info(f"Message preview: {message[:100]}...")
+                logger.info(f"Message length: {len(message)}")
+                logger.info(f"Message bytes: {message.encode('utf-8')}")
+                logger.info(f"Message repr: {repr(message)}")
+                
+                if security_manager and security_manager.enable_encryption and is_authenticated:
+                    logger.info("Attempting to decrypt authenticated message")
+                    # Strip newlines and whitespace that may be added during WebSocket transmission
+                    clean_message = message.strip().replace('\n', '').replace('\r', '')
+                    logger.info(f"Cleaned message length: {len(clean_message)}")
+                    logger.info(f"Cleaned message: {clean_message}")
+                    decrypted_message = security_manager.decrypt_message(clean_message)
+                    if decrypted_message is None:
+                        # Try processing as plain text (backward compatibility)
+                        logger.warning("Decryption failed, falling back to plain text")
+                        decrypted_message = message
+                    else:
+                        logger.info("Decryption successful")
+                else:
+                    logger.info("Processing message as plain text")
+                    decrypted_message = message
+                
+                # Parse message
+                try:
+                    message_data = json.loads(decrypted_message)
+                    logger.debug(f"Successfully parsed message: {message_data}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON message: {decrypted_message[:100]}... Error: {e}", exc_info=True)
+                    await websocket.send(json.dumps({
+                        "status": "error",
+                        "message": "Invalid JSON format"
+                    }))
+                    continue
+                
+                # Handle authentication
+                if not is_authenticated and message_data.get('command') == 'authenticate':
+                    logger.info(f"Processing authentication request from {client_address}")
+                    auth_attempts += 1
+                    if auth_attempts > SECURITY_CONFIG.get('max_auth_attempts', 3):
+                        logger.warning(f"Too many authentication attempts from {client_address}")
+                        await websocket.close(1008, "Too many authentication attempts")
+                        return
+                    
+                    token = message_data.get('token')
+                    logger.info(f"Validating token for {client_address} (attempt {auth_attempts})")
+                    
+                    if security_manager and security_manager.validate_connection_token(token):
+                        is_authenticated = True
+                        response = {
+                            'status': 'success',
+                            'message': 'Authentication successful',
+                            'session_id': session_id
+                        }
+                        logger.info(f"Client {client_address} authenticated successfully - sending response")
+                    else:
+                        response = {
+                            'status': 'error',
+                            'message': 'Authentication failed',
+                            'attempts_remaining': SECURITY_CONFIG.get('max_auth_attempts', 3) - auth_attempts
+                        }
+                        logger.warning(f"Authentication failed for {client_address} - sending error response")
+                    
+                    # Encrypt response if needed
+                    response_json = json.dumps(response)
+                    logger.debug(f"Sending auth response: {response_json}")
+                    
+                    # Authentication response should be sent as plain text
+                    # Encryption will be used for subsequent messages after authentication
+                    logger.debug("Sending authentication response as plain text")
+                    
+                    logger.info(f"Sending authentication response to {client_address}")
+                    await websocket.send(response_json)
+                    logger.info(f"Authentication response sent to {client_address}")
+                    continue
+                
+                # Reject unauthenticated commands (except ping)
+                if not is_authenticated and message_data.get('command') != 'ping':
+                    await websocket.send(json.dumps({
+                        "status": "error",
+                        "message": "Authentication required",
+                        "code": "AUTHENTICATION_REQUIRED"
+                    }))
+                    continue
+                
+                # Handle custom ping command for keep-alive
+                if message_data.get('command') == 'ping':
+                    logger.debug(f"Received keep-alive ping from {client_address}")
+                    # Extend the idle timeout for this connection
+                    connection_manager.extend_idle_timeout(websocket, extension_seconds=300)
+                    # Send pong response
+                    pong_response = {
+                        'status': 'success',
+                        'message': 'pong',
+                        'timestamp': message_data.get('timestamp', 0),
+                        'server_time': time.time()
+                    }
+                    
+                    response_json = json.dumps(pong_response)
+                    if security_manager and security_manager.enable_encryption and is_authenticated:
+                        response_json = security_manager.encrypt_message(response_json)
+                    
+                    await websocket.send(response_json)
+                    continue
+                
                 # Process the message using our message handler
-                response = message_handler.handle_message(message)
+                response = message_handler.handle_message(decrypted_message)
                 logger.debug(f"Message response: {response}")
 
+                # Encrypt response if needed (only after authentication)
+                response_json = json.dumps(response)
+                if security_manager and security_manager.enable_encryption and is_authenticated:
+                    response_json = security_manager.encrypt_message(response_json)
+
                 # Send the response back to the client
-                await websocket.send(json.dumps(response))
+                await websocket.send(response_json)
 
             except Exception as e:
                 logger.error(f"Error processing message: {str(e)}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
-                await websocket.send(json.dumps({
+                error_response = json.dumps({
                     "status": "error",
                     "message": str(e)
-                }))
+                })
+                
+                # Encrypt error response if needed
+                if security_manager and security_manager.enable_encryption:
+                    error_response = security_manager.encrypt_message(error_response)
+                
+                await websocket.send(error_response)
 
     except ConnectionRefusedError as e:
         logger.warning(f"Connection refused for {client_address}: {str(e)}")
@@ -105,15 +272,19 @@ async def main() -> None:
 
     try:
         # Generate QR code for connection
-        connection_string, qr_path = generate_connection_qr(port)
-        logger.info(f"Generated QR code for connection string: {connection_string}")
+        connection_string, qr_path = generate_connection_qr(port, security_manager)
+        logger.info(f"Generated QR code for connection data: {len(connection_string)} characters")
         logger.info(f"QR code saved to: {qr_path}")
         
         # Display ASCII QR code in terminal
-        ascii_qr = generate_ascii_qr(port)
+        ascii_qr = generate_ascii_qr(port, security_manager)
         print("\nASCII QR Code:")
         print(ascii_qr)
-        print(f"Connection string: {connection_string}")
+        print(f"Connection data length: {len(connection_string)} characters")
+        if security_manager:
+            print("🔒 Secure connection with authentication enabled")
+        else:
+            print("⚠️  Legacy connection mode (no authentication)")
         
         # Start the connection manager
         await connection_manager.start()
