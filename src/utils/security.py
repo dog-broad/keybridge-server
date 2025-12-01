@@ -1,7 +1,7 @@
 """
 Security Module
 
-This module handles authentication, token generation, and encryption for the virtual keyboard server.
+This module handles authentication, token generation, and encryption for the KeyBridge server.
 """
 
 import hashlib
@@ -40,14 +40,14 @@ class SecurityManager:
             kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA256(),
                 length=32,  # 256-bit key for AES-256
-                salt=b'virtual_keyboard_salt',
+                salt=b'keybridge_salt',
                 iterations=100000,
             )
             self._encryption_key = kdf.derive(self.secret_key)
             logger.info("AES-GCM encryption initialized")
             logger.info(f"PBKDF2 key derivation:")
             logger.info(f"Secret key: {self.secret_key.decode()}")
-            logger.info(f"Salt: virtual_keyboard_salt")
+            logger.info(f"Salt: keybridge_salt")
             logger.info(f"Iterations: 100000")
             logger.info(f"Key length: 32 bytes")
             logger.info(f"Derived key (hex): {self._encryption_key.hex()}")

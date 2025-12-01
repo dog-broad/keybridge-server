@@ -1,5 +1,5 @@
 """
-Configuration settings for the virtual keyboard server.
+Configuration settings for the KeyBridge server.
 """
 import os
 from typing import Dict, Any
@@ -26,7 +26,7 @@ SECURITY_CONFIG: Dict[str, Any] = {
     'max_auth_attempts': int(os.getenv('MAX_AUTH_ATTEMPTS', 3)),
     'rate_limit_per_minute': int(os.getenv('RATE_LIMIT', 300)),  # Max commands per minute per connection (increased for responsiveness, 100 is good)
     'enable_encryption': os.getenv('ENABLE_ENCRYPTION', 'true').lower() == 'true',
-    'secret_key': os.getenv('SECRET_KEY', 'virtual-keyboard-secret-key-change-in-production'),
+    'secret_key': os.getenv('SECRET_KEY', 'keybridge-secret-key-change-in-production'),
 }
 
 # Performance configuration

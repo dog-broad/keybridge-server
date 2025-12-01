@@ -1,4 +1,4 @@
-# Virtual Keyboard Server
+# KeyBridge Server
 
 A secure WebSocket server that receives keyboard input from mobile devices and simulates typing on the host computer. Features end-to-end encryption and token-based authentication.
 
@@ -62,17 +62,18 @@ The server will start and display a QR code containing encrypted connection data
 - Automatic rejection of excessive requests
 
 ### Configuration
-Security settings can be modified in `src/config.py`:
-```python
-SECURITY_CONFIG = {
-    'enable_authentication': True,
-    'token_expiry_minutes': 60,
-    'max_auth_attempts': 3,
-    'rate_limit_per_minute': 100,
-    'enable_encryption': True,
-    'secret_key': 'your-secret-key-here',  # Change in production!
-}
+Security settings can be modified via environment variables in `src/.env`:
+```bash
+# Security Configuration
+SECRET_KEY=your-strong-random-secret-key-here  # REQUIRED: Change from default!
+ENABLE_AUTH=true
+TOKEN_EXPIRY=60
+MAX_AUTH_ATTEMPTS=3
+RATE_LIMIT=300
+ENABLE_ENCRYPTION=true
 ```
+
+**⚠️ SECURITY WARNING**: The default secret key is for development only. **You must set a strong `SECRET_KEY` in production!** See [SECURITY.md](SECURITY.md) for details.
 
 ## Message Protocol
 
@@ -191,7 +192,7 @@ All commands return a JSON response:
 ## Project Structure
 
 ```
-virtual-keyboard-server/
+keybridge-server/
 ├── src/
 │   ├── main.py                    # Main server script
 │   ├── config.py                  # Configuration settings

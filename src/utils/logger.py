@@ -37,7 +37,7 @@ class LoggerManager:
             os.makedirs(log_dir)
 
         # Create a logger
-        logger = logging.getLogger('virtual_keyboard')
+        logger = logging.getLogger('keybridge')
         
         # Only add handlers if they haven't been added
         if not logger.handlers:
@@ -46,7 +46,7 @@ class LoggerManager:
             # Create handlers
             # File handler with timestamp in filename
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            file_handler = logging.FileHandler(f'{log_dir}/virtual_keyboard_{timestamp}.log')
+            file_handler = logging.FileHandler(f'{log_dir}/keybridge_{timestamp}.log')
             file_handler.setLevel(logging.DEBUG)
 
             # Console handler with UTF-8 encoding for Windows compatibility
@@ -91,7 +91,7 @@ class LoggerManager:
             self.setup_logger()
         
         if name:
-            return logging.getLogger(f'virtual_keyboard.{name}')
+            return logging.getLogger(f'keybridge.{name}')
         return self._logger
 
 # Create global logger manager instance

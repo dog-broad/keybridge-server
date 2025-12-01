@@ -64,7 +64,7 @@ def generate_connection_qr(
     connection_data = {
         "version": "2.0",
         "url": f"ws://{local_ip}:{port}",
-        "protocol": "virtual-keyboard-v2"
+        "protocol": "keybridge-v2"
     }
     
     # Add authentication token if security manager is provided
@@ -129,7 +129,7 @@ def generate_ascii_qr(
     connection_data = {
         "version": "2.0",
         "url": f"ws://{local_ip}:{port}",
-        "protocol": "virtual-keyboard-v2"
+        "protocol": "keybridge-v2"
     }
     
     # Add authentication token if security manager is provided
@@ -204,7 +204,7 @@ def parse_connection_qr(qr_data: str) -> dict:
         return {
             "version": "1.0",
             "url": url,
-            "protocol": "virtual-keyboard-v1"
+            "protocol": "keybridge-v1"
         }
     
     raise ValueError("Invalid QR code data format")
@@ -241,7 +241,7 @@ def regenerate_qr(port: int, output_path: str = "connection_qr.png", show_ascii:
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description='Regenerate QR code for Virtual Keyboard Server')
+    parser = argparse.ArgumentParser(description='Regenerate QR code for KeyBridge Server')
     parser.add_argument('--port', type=int, required=True, help='Port number for the server')
     parser.add_argument('--output', type=str, default='connection_qr.png',
                       help='Output path for the QR code image (default: connection_qr.png)')
