@@ -158,11 +158,15 @@ class SecurityManager:
             )
             encryptor = cipher.encryptor()
             
-            # Encrypt the message (tag is appended by finalize)
-            ciphertext = encryptor.update(message.encode('utf-8')) + encryptor.finalize()
+            # Encrypt the message
+            ciphertext = encryptor.update(message.encode('utf-8'))
+            encryptor.finalize()  # Finalize to make tag available
             
-            # Combine nonce + ciphertext (ciphertext includes tag)
-            encrypted_data = nonce + ciphertext
+            # Get the authentication tag
+            tag = encryptor.tag
+            
+            # Combine nonce + ciphertext + tag (matching Android format)
+            encrypted_data = nonce + ciphertext + tag
             
             # Encode as base64
             return base64.urlsafe_b64encode(encrypted_data).decode('utf-8')
@@ -202,7 +206,11 @@ class SecurityManager:
             encrypted_data = base64.urlsafe_b64decode(encrypted_message.encode('utf-8'))
             logger.info(f"Decoded encrypted data length: {len(encrypted_data)} bytes")
             
-            # Extract nonce (first 12 bytes), ciphertext (middle), and tag (last 16 bytes)
+            # Extract components: nonce (12 bytes) + ciphertext + tag (16 bytes)
+            # This matches Android's format: nonce + ciphertext + tag
+            if len(encrypted_data) < 28:  # Minimum: 12 (nonce) + 0 (ciphertext) + 16 (tag)
+                raise ValueError("Encrypted data too short")
+                
             nonce = encrypted_data[:12]
             tag = encrypted_data[-16:]  # Last 16 bytes are the tag
             ciphertext = encrypted_data[12:-16]  # Everything between nonce and tag

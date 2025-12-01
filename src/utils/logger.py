@@ -49,9 +49,17 @@ class LoggerManager:
             file_handler = logging.FileHandler(f'{log_dir}/virtual_keyboard_{timestamp}.log')
             file_handler.setLevel(logging.DEBUG)
 
-            # Console handler
-            console_handler = logging.StreamHandler()
+            # Console handler with UTF-8 encoding for Windows compatibility
+            import sys
+            console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setLevel(logging.INFO)
+            
+            # Set encoding to UTF-8 if available (for Windows Unicode support)
+            if hasattr(console_handler.stream, 'reconfigure'):
+                try:
+                    console_handler.stream.reconfigure(encoding='utf-8')
+                except Exception:
+                    pass  # Fallback to default encoding
 
             # Create formatters and add them to handlers
             formatter = logging.Formatter(LOG_CONFIG['log_format'])

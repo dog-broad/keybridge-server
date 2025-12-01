@@ -24,7 +24,7 @@ SECURITY_CONFIG: Dict[str, Any] = {
     'enable_authentication': os.getenv('ENABLE_AUTH', 'true').lower() == 'true',
     'token_expiry_minutes': int(os.getenv('TOKEN_EXPIRY', 60)),  # QR tokens expire after 1 hour
     'max_auth_attempts': int(os.getenv('MAX_AUTH_ATTEMPTS', 3)),
-    'rate_limit_per_minute': int(os.getenv('RATE_LIMIT', 100)),  # Max commands per minute per connection
+    'rate_limit_per_minute': int(os.getenv('RATE_LIMIT', 300)),  # Max commands per minute per connection (increased for responsiveness, 100 is good)
     'enable_encryption': os.getenv('ENABLE_ENCRYPTION', 'true').lower() == 'true',
     'secret_key': os.getenv('SECRET_KEY', 'virtual-keyboard-secret-key-change-in-production'),
 }
@@ -39,7 +39,7 @@ PERFORMANCE_CONFIG: Dict[str, Any] = {
 
 # Logging configuration
 LOG_CONFIG: Dict[str, Any] = {
-    'log_level': os.getenv('LOG_LEVEL', 'INFO'),
-    'log_format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    'log_level': os.getenv('LOG_LEVEL', 'INFO'),  # Use DEBUG for development, INFO for production
+    'log_format': '%(asctime)s - %(levelname)s - %(message)s',
     'log_dir': 'logs',
 } 

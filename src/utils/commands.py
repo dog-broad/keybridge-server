@@ -18,14 +18,19 @@ class CommandType(Enum):
     HOTKEY = "hotkey"      # Execute a hotkey combination
 
 # Key mapping from string names to pynput Key enum values (same as in KeyboardController)
+# Includes cross-platform aliases for Windows, Mac, and Linux
 SUPPORTED_KEYS = {
     # Navigation keys
     'backspace': Key.backspace,
     'tab': Key.tab,
     'enter': Key.enter,
+    'return': Key.enter,      # Mac alias
     'shift': Key.shift,
     'ctrl': Key.ctrl,
+    'control': Key.ctrl,      # Mac alias
     'alt': Key.alt,
+    'option': Key.alt,        # Mac alias - Option key is Alt
+    'opt': Key.alt,           # Mac alias
     'space': Key.space,
     'esc': Key.esc,
     'escape': Key.esc,
@@ -56,13 +61,17 @@ SUPPORTED_KEYS = {
     'page_up': Key.page_up,
     'page_down': Key.page_down,
     'insert': Key.insert,
+    'ins': Key.insert,
     'delete': Key.delete,
+    'del': Key.delete,
     
-    # Modifier keys
+    # Modifier keys - Command/Windows/Super
     'cmd': Key.cmd,
     'command': Key.cmd,
     'windows': Key.cmd,
     'win': Key.cmd,
+    'super': Key.cmd,         # Linux alias
+    'meta': Key.cmd,          # Generic alias
     
     # Media keys
     'media_play_pause': Key.media_play_pause,
@@ -72,15 +81,19 @@ SUPPORTED_KEYS = {
     'media_next': Key.media_next,
     'media_previous': Key.media_previous,
     
-    # Num lock and scroll lock
+    # Lock keys
     'num_lock': Key.num_lock,
+    'numlock': Key.num_lock,
     'scroll_lock': Key.scroll_lock,
+    'scrolllock': Key.scroll_lock,
     'caps_lock': Key.caps_lock,
+    'capslock': Key.caps_lock,
     
     # Print screen
     'print_screen': Key.print_screen,
     'prtsc': Key.print_screen,
     'prtscr': Key.print_screen,
+    'printscreen': Key.print_screen,
     
     # Pause/Break
     'pause': Key.pause,
@@ -154,6 +167,18 @@ class CommandValidator:
             raise ValueError(f"Unsupported key: '{data['key']}'. Supported keys: {supported_keys_list}")
     
     @staticmethod
+    def _is_valid_key(key_name: str) -> bool:
+        """Check if a key is valid (either a supported special key or a single character)."""
+        key_name = key_name.lower().strip()
+        # Allow special keys from SUPPORTED_KEYS
+        if key_name in SUPPORTED_KEYS:
+            return True
+        # Allow single character keys (letters, numbers, symbols)
+        if len(key_name) == 1:
+            return True
+        return False
+    
+    @staticmethod
     def _validate_key_combo_command(data: Dict[str, Any]) -> None:
         """Validate key combination command parameters."""
         if 'keys' not in data:
@@ -168,10 +193,9 @@ class CommandValidator:
             if not isinstance(key, str):
                 raise ValueError(f"All keys must be strings. Key at index {i} is {type(key)}")
             
-            key_name = key.lower().strip()
-            if key_name not in SUPPORTED_KEYS:
+            if not CommandValidator._is_valid_key(key):
                 supported_keys_list = ', '.join(sorted(SUPPORTED_KEYS.keys()))
-                raise ValueError(f"Unsupported key at index {i}: '{key}'. Supported keys: {supported_keys_list}")
+                raise ValueError(f"Unsupported key at index {i}: '{key}'. Supported: {supported_keys_list} or single characters (a-z, 0-9)")
     
     @staticmethod
     def _validate_hotkey_command(data: Dict[str, Any]) -> None:
@@ -188,10 +212,9 @@ class CommandValidator:
             if not isinstance(key, str):
                 raise ValueError(f"All keys must be strings. Key at index {i} is {type(key)}")
             
-            key_name = key.lower().strip()
-            if key_name not in SUPPORTED_KEYS:
+            if not CommandValidator._is_valid_key(key):
                 supported_keys_list = ', '.join(sorted(SUPPORTED_KEYS.keys()))
-                raise ValueError(f"Unsupported key at index {i}: '{key}'. Supported keys: {supported_keys_list}")
+                raise ValueError(f"Unsupported key at index {i}: '{key}'. Supported: {supported_keys_list} or single characters (a-z, 0-9)")
 
 # Example command formats for documentation
 COMMAND_EXAMPLES = {

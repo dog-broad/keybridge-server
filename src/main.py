@@ -98,28 +98,15 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
                     continue
                 
                 # Decrypt message if encryption is enabled and client is authenticated
-                # Initial handshake and authentication messages are sent as plain text
-                logger.info(f"Processing message from {client_address} - is_authenticated: {is_authenticated}, encryption_enabled: {security_manager.enable_encryption if security_manager else False}")
-                logger.info(f"Message preview: {message[:100]}...")
-                logger.info(f"Message length: {len(message)}")
-                logger.info(f"Message bytes: {message.encode('utf-8')}")
-                logger.info(f"Message repr: {repr(message)}")
-                
                 if security_manager and security_manager.enable_encryption and is_authenticated:
-                    logger.info("Attempting to decrypt authenticated message")
                     # Strip newlines and whitespace that may be added during WebSocket transmission
                     clean_message = message.strip().replace('\n', '').replace('\r', '')
-                    logger.info(f"Cleaned message length: {len(clean_message)}")
-                    logger.info(f"Cleaned message: {clean_message}")
                     decrypted_message = security_manager.decrypt_message(clean_message)
                     if decrypted_message is None:
                         # Try processing as plain text (backward compatibility)
-                        logger.warning("Decryption failed, falling back to plain text")
+                        logger.debug("Decryption failed, falling back to plain text")
                         decrypted_message = message
-                    else:
-                        logger.info("Decryption successful")
                 else:
-                    logger.info("Processing message as plain text")
                     decrypted_message = message
                 
                 # Parse message
@@ -136,7 +123,6 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
                 
                 # Handle authentication
                 if not is_authenticated and message_data.get('command') == 'authenticate':
-                    logger.info(f"Processing authentication request from {client_address}")
                     auth_attempts += 1
                     if auth_attempts > SECURITY_CONFIG.get('max_auth_attempts', 3):
                         logger.warning(f"Too many authentication attempts from {client_address}")
@@ -144,7 +130,6 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
                         return
                     
                     token = message_data.get('token')
-                    logger.info(f"Validating token for {client_address} (attempt {auth_attempts})")
                     
                     if security_manager and security_manager.validate_connection_token(token):
                         is_authenticated = True
@@ -153,26 +138,18 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
                             'message': 'Authentication successful',
                             'session_id': session_id
                         }
-                        logger.info(f"Client {client_address} authenticated successfully - sending response")
+                        logger.info(f"Client {client_address} authenticated successfully")
                     else:
                         response = {
                             'status': 'error',
                             'message': 'Authentication failed',
                             'attempts_remaining': SECURITY_CONFIG.get('max_auth_attempts', 3) - auth_attempts
                         }
-                        logger.warning(f"Authentication failed for {client_address} - sending error response")
+                        logger.warning(f"Authentication failed for {client_address}")
                     
-                    # Encrypt response if needed
+                    # Authentication response sent as plain text
                     response_json = json.dumps(response)
-                    logger.debug(f"Sending auth response: {response_json}")
-                    
-                    # Authentication response should be sent as plain text
-                    # Encryption will be used for subsequent messages after authentication
-                    logger.debug("Sending authentication response as plain text")
-                    
-                    logger.info(f"Sending authentication response to {client_address}")
                     await websocket.send(response_json)
-                    logger.info(f"Authentication response sent to {client_address}")
                     continue
                 
                 # Reject unauthenticated commands (except ping)
@@ -208,6 +185,15 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
                 response = message_handler.handle_message(decrypted_message)
                 logger.debug(f"Message response: {response}")
 
+                # Check if this response requires acknowledgment tracking
+                message_id = response.get('message_id')
+                requires_ack = response.get('requires_ack', False)
+                
+                if requires_ack and message_id:
+                    # Add to pending acknowledgments ONLY when we're about to send the response
+                    message_handler.add_pending_acknowledgment(message_id, response)
+                    logger.debug(f"Added message {message_id} to pending acknowledgments")
+
                 # Encrypt response if needed (only after authentication)
                 response_json = json.dumps(response)
                 if security_manager and security_manager.enable_encryption and is_authenticated:
@@ -215,6 +201,7 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
 
                 # Send the response back to the client
                 await websocket.send(response_json)
+                logger.debug(f"Sent response: {response_json[:100]}..." if len(response_json) > 100 else f"Sent response: {response_json}")
 
             except Exception as e:
                 logger.error(f"Error processing message: {str(e)}")
