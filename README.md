@@ -208,6 +208,8 @@ keybridge-server/
 ├── logs/                          # Log files directory
 ├── connection_qr.png              # Generated QR code image
 ├── requirements.txt               # Python dependencies
+├── LICENSE                        # Apache License 2.0
+├── NOTICE                         # Third-party notices
 └── README.md                      # This file
 ```
 
@@ -287,4 +289,6 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## License
 
-MIT License
+Apache License 2.0
+
+See the [LICENSE](LICENSE) file for details.

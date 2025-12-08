@@ -40,5 +40,18 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Test
-test.py
+# Test files
+test*.py
+test_*.py
+*_test.py
+
+# Generated files
+connection_qr.png
+
+# Environment files (keep .env.example)
+.env
+.env.local
+.env.*.local
+
+# Release files
+RELEASE_GUIDE.md
