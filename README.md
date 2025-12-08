@@ -1,6 +1,24 @@
+<div align="center">
+
 # KeyBridge Server
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](https://github.com/dog-broad/keybridge-server)
+
 A secure WebSocket server that receives keyboard input from mobile devices and simulates typing on the host computer. Features end-to-end encryption and token-based authentication.
+
+---
+
+### 📱 **This server requires the KeyBridge Android App**
+
+**[➡️ Get KeyBridge Android App](https://github.com/dog-broad/KeyBridge)**
+
+Both components work together to provide secure remote keyboard control.
+
+---
+
+</div>
 
 ## Features
 
