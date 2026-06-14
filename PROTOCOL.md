@@ -131,31 +131,39 @@ unsupported key.
 
 These messages are flat (not enveloped) and handle connection lifecycle.
 
-On connect, the server sends a handshake:
+On connect, the server sends a handshake carrying the per-connection salt used to derive
+the session key (see Pairing and encryption). It is the one plaintext message:
 
 ```json
 { "type": "handshake", "protocol_version": "2.0",
-  "features": { "authentication": true, "encryption": true, "compression": true },
-  "session_id": "…" }
+  "features": { "encryption": true, "compression": true },
+  "session_id": "…", "salt": "<base64>" }
 ```
 
-If authentication is enabled, the client authenticates with the token carried in the
-pairing QR code:
+There is no separate authentication step: a client that scanned the QR holds the pairing
+secret and can derive the session key, and the server accepts only messages that
+authenticate under it.
 
-```json
-{ "command": "authenticate", "token": "…" }
-```
-
-Keep-alive uses a ping the client sends periodically; the server replies with a pong
-and extends the connection's idle timeout:
+Keep-alive uses a ping the client sends periodically; the server replies with a pong and
+extends the connection's idle timeout:
 
 ```json
 { "command": "ping", "timestamp": 1701234567890 }
 ```
 
-## Encryption
+## Pairing and encryption
 
-When message encryption is enabled, the serialized envelope (or control message) is the
-plaintext that is encrypted before being put on the wire, and decrypted on receipt. The
-envelope shape above describes the decrypted message. Encryption is a transport concern
-layered around the protocol; it does not change the envelope.
+The server generates a random 32-byte **pairing secret** at startup and places it
+(base64) in the QR as `key`. It is delivered only by scanning the QR and is never sent
+over the connection. Each connection derives a session key from the handshake `salt`:
+
+```
+session_key = HMAC-SHA256(pairing_secret, salt)
+```
+
+Every message after the handshake is AES-256-GCM under the session key
+(`nonce ‖ ciphertext ‖ tag`, URL-safe base64, no padding). A message that fails to
+authenticate is rejected and the connection is closed — there is no plaintext fallback.
+The pairing secret lives for the host process lifetime; re-pair by restarting / showing a
+new QR. (No encryption is used only in an explicit local-testing mode, where the
+handshake carries no salt.)
