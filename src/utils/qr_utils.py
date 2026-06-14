@@ -81,25 +81,17 @@ def generate_connection_qr(
         "protocol": "keybridge-v2"
     }
     
-    # Add authentication token if security manager is provided
-    if security_manager:
-        try:
-            token, expiry = security_manager.generate_connection_token()
-            connection_data["auth"] = {
-                "token": token,
-                "expires": expiry,
-                "type": "bearer"
-            }
-            logger.info("Generated QR code with authentication token")
-        except Exception as e:
-            logger.warning(f"Failed to generate auth token: {e}")
-            logger.info("Generated QR code without authentication (fallback)")
+    # Carry the pairing secret (the per-session key is derived from it). It travels only
+    # in the QR, never over the network.
+    if security_manager and security_manager.enable_encryption:
+        connection_data["key"] = security_manager.pairing_secret_b64()
+        logger.info("Generated QR with a fresh pairing secret")
     else:
-        logger.info("Generated QR code without authentication (legacy mode)")
-    
+        logger.info("Generated QR without encryption (local mode)")
+
     # Convert to JSON string
     connection_string = json.dumps(connection_data, separators=(',', ':'))
-    
+
     # Create QR code
     qr = qrcode.QRCode(
         version=None,  # Auto-determine version based on data
@@ -146,21 +138,13 @@ def generate_ascii_qr(
         "protocol": "keybridge-v2"
     }
     
-    # Add authentication token if security manager is provided
-    if security_manager:
-        try:
-            token, expiry = security_manager.generate_connection_token()
-            connection_data["auth"] = {
-                "token": token,
-                "expires": expiry,
-                "type": "bearer"
-            }
-        except Exception as e:
-            logger.warning(f"Failed to generate auth token: {e}")
-    
+    # Carry the pairing secret (see generate_connection_qr).
+    if security_manager and security_manager.enable_encryption:
+        connection_data["key"] = security_manager.pairing_secret_b64()
+
     # Convert to JSON string
     connection_string = json.dumps(connection_data, separators=(',', ':'))
-    
+
     # Create QR code
     qr = qrcode.QRCode(
         version=None,  # Auto-determine version
