@@ -15,21 +15,15 @@
 """
 Commands Module
 
-This module defines all supported command types and provides validation utilities
-for command handling.
+This module owns the set of supported keys and validates the payload of each
+envelope input type before it is applied. Envelope structure (version, id, seq,
+total, type) is validated in ``envelope.py``; this module validates the body.
 """
 
-from enum import Enum, auto
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 from pynput.keyboard import Key
 
-class CommandType(Enum):
-    """Enumeration of all supported command types."""
-    TYPE = "type"           # Type text
-    KEY_PRESS = "key_press" # Press a single key
-    KEY_RELEASE = "key_release" # Release a single key
-    KEY_COMBO = "key_combo" # Press multiple keys in combination
-    HOTKEY = "hotkey"      # Execute a hotkey combination
+from .envelope import EnvelopeType
 
 # Key mapping from string names to pynput Key enum values (same as in KeyboardController)
 # Includes cross-platform aliases for Windows, Mac, and Linux
@@ -119,137 +113,79 @@ SUPPORTED_KEYS = {
 }
 
 class CommandValidator:
-    """Validates command structure and parameters."""
-    
+    """Validates the payload of each envelope input type."""
+
     @staticmethod
-    def validate_command(data: Dict[str, Any]) -> None:
+    def validate_payload(env_type: EnvelopeType, payload: Dict[str, Any]) -> None:
         """
-        Validate the command structure and parameters.
-        
+        Validate the payload for a given envelope input type.
+
         Args:
-            data (Dict[str, Any]): Command data to validate
-            
+            env_type: The envelope type whose payload is being validated.
+            payload: The envelope's payload object.
+
         Raises:
-            ValueError: If command is invalid
+            ValueError: If the payload is missing fields, mistyped, or references an
+                unsupported key. Acks are not a client-to-host input and are rejected.
         """
-        if not isinstance(data, dict):
-            raise ValueError("Command must be a JSON object")
-            
-        if 'command' not in data:
-            raise ValueError("Command must contain a 'command' field")
-            
-        command = data['command']
-        try:
-            command_type = CommandType(command)
-        except ValueError:
-            raise ValueError(f"Invalid command type: {command}")
-            
-        # Validate command-specific parameters
-        if command_type == CommandType.TYPE:
-            CommandValidator._validate_type_command(data)
-        elif command_type == CommandType.KEY_PRESS:
-            CommandValidator._validate_key_command(data)
-        elif command_type == CommandType.KEY_RELEASE:
-            CommandValidator._validate_key_command(data)
-        elif command_type == CommandType.KEY_COMBO:
-            CommandValidator._validate_key_combo_command(data)
-        elif command_type == CommandType.HOTKEY:
-            CommandValidator._validate_hotkey_command(data)
-    
+        if env_type == EnvelopeType.TYPE:
+            CommandValidator._validate_type_payload(payload)
+        elif env_type in (EnvelopeType.KEY_PRESS, EnvelopeType.KEY_RELEASE):
+            CommandValidator._validate_key_payload(payload)
+        elif env_type == EnvelopeType.KEY_COMBO:
+            CommandValidator._validate_key_combo_payload(payload)
+        else:
+            raise ValueError(f"Cannot apply envelope type: {env_type.value}")
+
     @staticmethod
-    def _validate_type_command(data: Dict[str, Any]) -> None:
-        """Validate type command parameters."""
-        if 'text' not in data:
-            raise ValueError("'type' command requires a 'text' field")
-        if not isinstance(data['text'], str):
-            raise ValueError("'text' must be a string")
-        if not data['text'].strip():
+    def _validate_type_payload(payload: Dict[str, Any]) -> None:
+        """Validate a 'type' payload: a non-empty string and an optional delay."""
+        text = payload.get('text')
+        if not isinstance(text, str):
+            raise ValueError("'type' payload requires a string 'text' field")
+        if not text.strip():
             raise ValueError("'text' cannot be empty")
-    
+
+        delay_ms = payload.get('delay_ms', 0)
+        if not isinstance(delay_ms, int) or isinstance(delay_ms, bool) or delay_ms < 0:
+            raise ValueError("'delay_ms' must be a non-negative integer")
+
     @staticmethod
-    def _validate_key_command(data: Dict[str, Any]) -> None:
-        """Validate key press/release command parameters."""
-        if 'key' not in data:
-            raise ValueError("Key command requires a 'key' field")
-        if not isinstance(data['key'], str):
-            raise ValueError("'key' must be a string")
-        
-        # Validate that the key is supported
-        key_name = data['key'].lower().strip()
-        if key_name not in SUPPORTED_KEYS:
-            supported_keys_list = ', '.join(sorted(SUPPORTED_KEYS.keys()))
-            raise ValueError(f"Unsupported key: '{data['key']}'. Supported keys: {supported_keys_list}")
-    
+    def _validate_key_payload(payload: Dict[str, Any]) -> None:
+        """Validate a 'key_press'/'key_release' payload: one supported key."""
+        key = payload.get('key')
+        if not isinstance(key, str):
+            raise ValueError("key payload requires a string 'key' field")
+        if not CommandValidator._is_valid_key(key):
+            raise ValueError(CommandValidator._unsupported_key_message(key))
+
+    @staticmethod
+    def _validate_key_combo_payload(payload: Dict[str, Any]) -> None:
+        """Validate a 'key_combo' payload: a non-empty list of supported keys."""
+        keys = payload.get('keys')
+        if not isinstance(keys, list):
+            raise ValueError("'key_combo' payload requires a 'keys' list")
+        if not keys:
+            raise ValueError("'keys' list cannot be empty")
+
+        for i, key in enumerate(keys):
+            if not isinstance(key, str):
+                raise ValueError(f"All keys must be strings; key at index {i} is {type(key).__name__}")
+            if not CommandValidator._is_valid_key(key):
+                raise ValueError(CommandValidator._unsupported_key_message(key, index=i))
+
     @staticmethod
     def _is_valid_key(key_name: str) -> bool:
-        """Check if a key is valid (either a supported special key or a single character)."""
+        """A key is valid if it is a supported special key or a single character."""
         key_name = key_name.lower().strip()
-        # Allow special keys from SUPPORTED_KEYS
         if key_name in SUPPORTED_KEYS:
             return True
-        # Allow single character keys (letters, numbers, symbols)
-        if len(key_name) == 1:
-            return True
-        return False
-    
-    @staticmethod
-    def _validate_key_combo_command(data: Dict[str, Any]) -> None:
-        """Validate key combination command parameters."""
-        if 'keys' not in data:
-            raise ValueError("'key_combo' command requires a 'keys' field")
-        if not isinstance(data['keys'], list):
-            raise ValueError("'keys' must be a list")
-        if not data['keys']:
-            raise ValueError("'keys' list cannot be empty")
-        
-        # Validate each key in the list
-        for i, key in enumerate(data['keys']):
-            if not isinstance(key, str):
-                raise ValueError(f"All keys must be strings. Key at index {i} is {type(key)}")
-            
-            if not CommandValidator._is_valid_key(key):
-                supported_keys_list = ', '.join(sorted(SUPPORTED_KEYS.keys()))
-                raise ValueError(f"Unsupported key at index {i}: '{key}'. Supported: {supported_keys_list} or single characters (a-z, 0-9)")
-    
-    @staticmethod
-    def _validate_hotkey_command(data: Dict[str, Any]) -> None:
-        """Validate hotkey command parameters."""
-        if 'keys' not in data:
-            raise ValueError("'hotkey' command requires a 'keys' field")
-        if not isinstance(data['keys'], list):
-            raise ValueError("'keys' must be a list")
-        if not data['keys']:
-            raise ValueError("'keys' list cannot be empty")
-        
-        # Validate each key in the list
-        for i, key in enumerate(data['keys']):
-            if not isinstance(key, str):
-                raise ValueError(f"All keys must be strings. Key at index {i} is {type(key)}")
-            
-            if not CommandValidator._is_valid_key(key):
-                supported_keys_list = ', '.join(sorted(SUPPORTED_KEYS.keys()))
-                raise ValueError(f"Unsupported key at index {i}: '{key}'. Supported: {supported_keys_list} or single characters (a-z, 0-9)")
+        return len(key_name) == 1
 
-# Example command formats for documentation
-COMMAND_EXAMPLES = {
-    CommandType.TYPE: {
-        "command": "type",
-        "text": "Hello, World!"
-    },
-    CommandType.KEY_PRESS: {
-        "command": "key_press",
-        "key": "shift"
-    },
-    CommandType.KEY_RELEASE: {
-        "command": "key_release",
-        "key": "shift"
-    },
-    CommandType.KEY_COMBO: {
-        "command": "key_combo",
-        "keys": ["ctrl", "c"]
-    },
-    CommandType.HOTKEY: {
-        "command": "hotkey",
-        "keys": ["ctrl", "alt", "delete"]
-    }
-} 
+    @staticmethod
+    def _unsupported_key_message(key: str, index: int = None) -> str:
+        """Build a helpful 'unsupported key' message listing the supported names."""
+        supported = ', '.join(sorted(SUPPORTED_KEYS.keys()))
+        where = f" at index {index}" if index is not None else ""
+        return (f"Unsupported key{where}: '{key}'. Supported: {supported} "
+                f"or single characters (a-z, 0-9, symbols)")

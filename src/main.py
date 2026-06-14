@@ -24,6 +24,7 @@ from websockets.server import WebSocketServer
 from websockets.legacy.server import WebSocketServerProtocol
 from utils.logger import setup_logger
 from utils.message_handler import MessageHandler
+from utils.envelope import EnvelopeError, SeenChunks, build_ack, parse_envelope
 from utils.connection_manager import ConnectionManager
 from utils.qr_utils import generate_connection_qr, generate_ascii_qr
 from utils.security import SecurityManager, RateLimiter
@@ -73,6 +74,9 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
     is_authenticated = not SECURITY_CONFIG.get('enable_authentication', True)
     auth_attempts = 0
     client_id = security_manager.hash_client_identifier(client_ip) if security_manager else client_ip
+
+    # Per-connection record of applied chunks, for idempotent client retries.
+    seen_chunks = SeenChunks()
     
     try:
         # Add connection to manager and get session ID
@@ -195,27 +199,28 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
                     await websocket.send(response_json)
                     continue
                 
-                # Process the message using our message handler
-                response = message_handler.handle_message(decrypted_message)
-                logger.debug(f"Message response: {response}")
+                # Data plane: a versioned input envelope. Parse, apply, and ack.
+                try:
+                    envelope = parse_envelope(message_data)
+                except EnvelopeError as e:
+                    logger.warning(f"Rejected envelope from {client_address}: {e}")
+                    if e.msg_id is not None and e.seq is not None:
+                        reply = build_ack(e.msg_id, e.seq, "error", str(e))
+                    else:
+                        reply = {"status": "error", "message": str(e)}
+                    reply_json = json.dumps(reply)
+                    if security_manager and security_manager.enable_encryption and is_authenticated:
+                        reply_json = security_manager.encrypt_message(reply_json)
+                    await websocket.send(reply_json)
+                    continue
 
-                # Check if this response requires acknowledgment tracking
-                message_id = response.get('message_id')
-                requires_ack = response.get('requires_ack', False)
-                
-                if requires_ack and message_id:
-                    # Add to pending acknowledgments ONLY when we're about to send the response
-                    message_handler.add_pending_acknowledgment(message_id, response)
-                    logger.debug(f"Added message {message_id} to pending acknowledgments")
+                ack = await message_handler.handle_envelope(envelope, seen_chunks)
 
-                # Encrypt response if needed (only after authentication)
-                response_json = json.dumps(response)
+                ack_json = json.dumps(ack)
                 if security_manager and security_manager.enable_encryption and is_authenticated:
-                    response_json = security_manager.encrypt_message(response_json)
-
-                # Send the response back to the client
-                await websocket.send(response_json)
-                logger.debug(f"Sent response: {response_json[:100]}..." if len(response_json) > 100 else f"Sent response: {response_json}")
+                    ack_json = security_manager.encrypt_message(ack_json)
+                await websocket.send(ack_json)
+                logger.debug(f"Acked {ack['id']}#{ack['seq']} -> {ack['status']}")
 
             except Exception as e:
                 logger.error(f"Error processing message: {str(e)}")
