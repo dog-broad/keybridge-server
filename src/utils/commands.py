@@ -143,7 +143,10 @@ class CommandValidator:
         text = payload.get('text')
         if not isinstance(text, str):
             raise ValueError("'type' payload requires a string 'text' field")
-        if not text.strip():
+        # Reject only a truly empty string. A chunk may legitimately be all whitespace
+        # (a long run of spaces/newlines inside a larger paste); those are real characters
+        # to type. Guarding against a blank *whole message* is the client's job.
+        if text == "":
             raise ValueError("'text' cannot be empty")
 
         delay_ms = payload.get('delay_ms', 0)

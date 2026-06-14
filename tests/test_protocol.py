@@ -159,9 +159,14 @@ def test_validate_type_payload_requires_text():
         CommandValidator.validate_payload(EnvelopeType.TYPE, {})
 
 
-def test_validate_type_payload_rejects_blank_text():
+def test_validate_type_payload_rejects_empty_string():
     with pytest.raises(ValueError):
-        CommandValidator.validate_payload(EnvelopeType.TYPE, {"text": "   "})
+        CommandValidator.validate_payload(EnvelopeType.TYPE, {"text": ""})
+
+
+def test_validate_type_payload_allows_whitespace_chunk():
+    # A chunk that is all whitespace is valid input mid-paste; it must not be rejected.
+    CommandValidator.validate_payload(EnvelopeType.TYPE, {"text": "   \n  "})
 
 
 def test_validate_type_payload_rejects_negative_delay():
@@ -217,7 +222,7 @@ def test_handle_duplicate_chunk_reacks_without_reapplying():
 def test_handle_invalid_payload_error_ack_not_recorded():
     handler = make_handler()
     seen = SeenChunks()
-    ack = run(handler.handle_envelope(parse_envelope(env(payload={"text": "   "})), seen))
+    ack = run(handler.handle_envelope(parse_envelope(env(payload={})), seen))  # missing 'text'
     assert ack["status"] == "error" and "error" in ack
     assert handler.keyboard.calls == []
     assert not seen.has("m1", 0)
