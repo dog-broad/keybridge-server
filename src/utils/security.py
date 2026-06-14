@@ -202,38 +202,21 @@ class SecurityManager:
             return encrypted_message
         
         try:
-            logger.info(f"Attempting to decrypt message: {encrypted_message[:50]}...")
-            logger.info(f"Message length: {len(encrypted_message)}")
-            logger.info(f"Full message: {encrypted_message}")
-            
-            # Decode from base64 (Android uses NO_PADDING, so we need to add padding if needed)
-            # Add padding if necessary
+            # Android encodes without base64 padding; restore it before decoding.
             missing_padding = len(encrypted_message) % 4
             if missing_padding:
-                padded_message = encrypted_message + '=' * (4 - missing_padding)
-                logger.info(f"Added {4 - missing_padding} padding characters")
-                logger.info(f"Padded message: {padded_message}")
-                encrypted_message = padded_message
-            else:
-                logger.info("No padding needed")
-            
+                encrypted_message = encrypted_message + '=' * (4 - missing_padding)
+
             encrypted_data = base64.urlsafe_b64decode(encrypted_message.encode('utf-8'))
-            logger.info(f"Decoded encrypted data length: {len(encrypted_data)} bytes")
-            
-            # Extract components: nonce (12 bytes) + ciphertext + tag (16 bytes)
-            # This matches Android's format: nonce + ciphertext + tag
-            if len(encrypted_data) < 28:  # Minimum: 12 (nonce) + 0 (ciphertext) + 16 (tag)
+
+            # Layout matches the client: nonce (12 bytes) + ciphertext + tag (16 bytes).
+            if len(encrypted_data) < 28:  # 12 (nonce) + 0 (ciphertext) + 16 (tag)
                 raise ValueError("Encrypted data too short")
-                
+
             nonce = encrypted_data[:12]
-            tag = encrypted_data[-16:]  # Last 16 bytes are the tag
-            ciphertext = encrypted_data[12:-16]  # Everything between nonce and tag
-            
-            logger.info(f"Nonce (hex): {nonce.hex()}")
-            logger.info(f"Tag (hex): {tag.hex()}")
-            logger.info(f"Ciphertext length: {len(ciphertext)} bytes")
-            logger.info(f"Using encryption key (hex): {self._encryption_key.hex()}")
-            
+            tag = encrypted_data[-16:]
+            ciphertext = encrypted_data[12:-16]
+
             # Decrypt using AES-GCM with separate tag
             cipher = Cipher(
                 algorithms.AES(self._encryption_key),
@@ -241,17 +224,12 @@ class SecurityManager:
                 backend=default_backend()
             )
             decryptor = cipher.decryptor()
-            
-            # Decrypt the message
+
             decrypted = decryptor.update(ciphertext) + decryptor.finalize()
-            logger.info(f"Decryption successful, decrypted length: {len(decrypted)} bytes")
             return decrypted.decode('utf-8')
         except Exception as e:
-            logger.error(f"Message decryption failed: {str(e)}")
-            logger.error(f"Error type: {type(e).__name__}")
-            logger.error(f"Failed message: {encrypted_message}")
-            import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
+            # Never log the payload or key material; a one-line cause is enough.
+            logger.error(f"Message decryption failed: {type(e).__name__}: {e}")
             return None
     
     def hash_client_identifier(self, identifier: str) -> str:

@@ -130,9 +130,8 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
                 # Parse message
                 try:
                     message_data = json.loads(decrypted_message)
-                    logger.debug(f"Successfully parsed message: {message_data}")
                 except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse JSON message: {decrypted_message[:100]}... Error: {e}", exc_info=True)
+                    logger.error(f"Failed to parse JSON message: {e}")
                     await websocket.send(json.dumps({
                         "status": "error",
                         "message": "Invalid JSON format"
