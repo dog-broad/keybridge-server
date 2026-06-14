@@ -82,6 +82,17 @@ def test_decrypt_tampered_ciphertext_raises():
         sm.decrypt(tampered, key)
 
 
+def test_decrypt_tolerates_wrapped_base64():
+    # Android's base64 encoder wraps lines every 76 chars unless NO_WRAP is set; the host
+    # must still decode such input (it strips whitespace before decoding).
+    sm = SecurityManager()
+    key = sm.derive_session_key(sm.new_session_salt())
+    message = "a fairly long message that exceeds seventy-six base64 characters " * 4
+    token = sm.encrypt(message, key)
+    wrapped = "\n".join(token[i:i + 76] for i in range(0, len(token), 76))
+    assert sm.decrypt(wrapped, key) == message
+
+
 def test_decrypt_rejects_garbage():
     sm = SecurityManager()
     key = sm.derive_session_key(sm.new_session_salt())

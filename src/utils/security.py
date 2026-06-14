@@ -97,8 +97,9 @@ class SecurityManager:
                 caller must treat this as a hard error and close the connection — there
                 is deliberately no plaintext fallback.
         """
-        cleaned = token.strip()
-        # The client encodes without base64 padding; restore it before decoding.
+        # Drop all whitespace: some base64 encoders (Android's) wrap lines every 76 chars,
+        # and the client omits padding — restore both before decoding.
+        cleaned = "".join(token.split())
         padding = (-len(cleaned)) % 4
         raw = base64.urlsafe_b64decode(cleaned + ("=" * padding))
         if len(raw) < NONCE_BYTES + TAG_BYTES:
