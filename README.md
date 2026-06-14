@@ -23,8 +23,7 @@ Both components work together to provide secure remote keyboard control.
 ## Features
 
 - **Secure WebSocket Server** for real-time communication
-- **AES-256-GCM Encryption** for all message traffic
-- **Token-based Authentication** with QR code setup
+- **AES-256-GCM Encryption** with a per-session key derived from a QR-delivered pairing secret
 - **Rate Limiting** to prevent abuse
 - **Keyboard Simulation** using pynput
 - **Comprehensive Logging** system
@@ -65,33 +64,24 @@ The server will start and display a QR code containing encrypted connection data
 
 ## Security Features
 
-### Encryption
-- **AES-256-GCM** symmetric encryption for all messages after authentication
-- **PBKDF2** key derivation with SHA256 and 100,000 iterations
-- Unique nonce for each encrypted message
-
-### Authentication
-- **Token-based** authentication with expiration
-- Maximum authentication attempts to prevent brute force
-- Session ID tracking for connection management
+### Pairing and encryption
+- A fresh random **pairing secret** is generated each run and shown only in the QR code — it is never sent over the network and is not stored in the source.
+- Each connection derives its own key, `HMAC-SHA256(pairing_secret, salt)`, from a per-connection salt in the handshake.
+- **AES-256-GCM** for every message after the handshake, with a unique nonce per message.
+- Authorization is implicit: a message that does not authenticate under the session key is rejected and the connection is closed (no plaintext fallback).
+- See [PROTOCOL.md](PROTOCOL.md) for the exact scheme.
 
 ### Rate Limiting
-- Configurable request limits per minute per connection
-- Automatic rejection of excessive requests
+- Configurable request limits per minute per connection; idle clients are evicted so the limiter map stays bounded.
 
 ### Configuration
-Security settings can be modified via environment variables in `src/.env`:
+Settings can be set via environment variables (e.g. in `src/.env`):
 ```bash
-# Security Configuration
-SECRET_KEY=your-strong-random-secret-key-here  # REQUIRED: Change from default!
-ENABLE_AUTH=true
-TOKEN_EXPIRY=60
-MAX_AUTH_ATTEMPTS=3
 RATE_LIMIT=300
-ENABLE_ENCRYPTION=true
+ENABLE_ENCRYPTION=true   # set false only for local plaintext testing
 ```
 
-**⚠️ SECURITY WARNING**: The default secret key is for development only. **You must set a strong `SECRET_KEY` in production!** See [SECURITY.md](SECURITY.md) for details.
+There is no secret to configure — the pairing secret is generated automatically and delivered via the QR.
 
 ## Message Protocol
 
