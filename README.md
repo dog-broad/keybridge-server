@@ -28,7 +28,7 @@ Both components work together to provide secure remote keyboard control.
 - **Rate Limiting** to prevent abuse
 - **Keyboard Simulation** using pynput
 - **Comprehensive Logging** system
-- **JSON-based Protocol** with acknowledgment support
+- **Versioned message protocol** with per-chunk delivery acknowledgement
 - **Connection Management** with session tracking and keep-alive
 - **QR Code Generation** for easy mobile pairing
 
@@ -95,54 +95,17 @@ ENABLE_ENCRYPTION=true
 
 ## Message Protocol
 
-Messages are sent in JSON format with the following command types:
+Input travels in a small versioned envelope, and the server acknowledges every chunk it
+applies, so the client knows what landed. Long text is split into ordered chunks the
+client can track as progress. The full contract — envelope fields, input types, the
+acknowledgement shape, chunking, and idempotent retry — is specified in
+**[PROTOCOL.md](PROTOCOL.md)**.
 
-### Type Text
-```json
-{
-    "command": "type",
-    "text": "Hello, World!"
-}
-```
+A `type` message, for example, looks like:
 
-### Press Single Key
 ```json
-{
-    "command": "key_press",
-    "key": "backspace"
-}
-```
-
-### Release Single Key
-```json
-{
-    "command": "key_release",
-    "key": "shift"
-}
-```
-
-### Key Combination
-```json
-{
-    "command": "key_combo",
-    "keys": ["ctrl", "c"]
-}
-```
-
-### Hotkey
-```json
-{
-    "command": "hotkey",
-    "keys": ["ctrl", "alt", "delete"]
-}
-```
-
-### Keep-Alive Ping
-```json
-{
-    "command": "ping",
-    "timestamp": 1701234567890
-}
+{ "v": 1, "id": "…", "seq": 0, "total": 1, "type": "type",
+  "payload": { "text": "Hello, World!" } }
 ```
 
 ## Supported Keys
@@ -177,35 +140,17 @@ The server supports the following special keys:
 - `media_play_pause`, `media_next`, `media_previous`
 - `media_volume_up`, `media_volume_down`, `media_volume_mute`
 
-## Response Format
+## Acknowledgements
 
-All commands return a JSON response:
+The server confirms each applied chunk with an `ack` that echoes the message `id` and
+chunk `seq`:
 
-### Success Response
 ```json
-{
-    "status": "success",
-    "message": "Successfully typed text: Hello, World!"
-}
+{ "v": 1, "type": "ack", "id": "…", "seq": 0, "status": "ok" }
 ```
 
-### Error Response
-```json
-{
-    "status": "error",
-    "message": "Error description"
-}
-```
-
-### Response with Acknowledgment
-```json
-{
-    "status": "success",
-    "message": "Successfully pressed key: ctrl",
-    "message_id": "uuid-here",
-    "requires_ack": true
-}
-```
+A failure to apply a chunk returns `"status": "error"` with a reason. See
+[PROTOCOL.md](PROTOCOL.md) for the full acknowledgement and retry semantics.
 
 ## Project Structure
 
@@ -228,6 +173,7 @@ keybridge-server/
 ├── requirements.txt               # Python dependencies
 ├── LICENSE                        # Apache License 2.0
 ├── NOTICE                         # Third-party notices
+├── PROTOCOL.md                    # Wire protocol contract
 └── README.md                      # This file
 ```
 

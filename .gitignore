@@ -40,10 +40,8 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Test files
-test*.py
-test_*.py
-*_test.py
+# Test cache
+.pytest_cache/
 
 # Generated files
 connection_qr.png
