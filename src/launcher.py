@@ -236,18 +236,24 @@ class LauncherWindow(QtWidgets.QMainWindow):
         self.update_status(self.server.client_count)
 
     def _build_menus(self) -> None:
-        """A conventional menu bar — the standard, app-like home for secondary actions."""
+        """A conventional menu bar — the standard, app-like home for secondary actions.
+
+        Items carry native icons so the menu's fixed icon/checkmark gutter reads as
+        'icon + text' (as in most apps) rather than empty space before each label.
+        """
+        style = self.style()
+        SP = QtWidgets.QStyle.StandardPixmap
         bar = self.menuBar()
 
         file_menu = bar.addMenu("&File")
-        file_menu.addAction("Hide to Tray", self.hide)
+        file_menu.addAction(style.standardIcon(SP.SP_TitleBarMinButton), "Hide to Tray", self.hide)
         file_menu.addSeparator()
-        file_menu.addAction("Quit", self.request_quit)
+        file_menu.addAction(style.standardIcon(SP.SP_DialogCloseButton), "Quit", self.request_quit)
 
         tools = bar.addMenu("&Tools")
-        tools.addAction("Regenerate Pairing Code…", self._regenerate)
-        tools.addAction("Open Logs Folder", open_logs_folder)
-        tools.addAction("Copy Connection Details", self._copy_details)
+        tools.addAction(style.standardIcon(SP.SP_BrowserReload), "Regenerate Pairing Code…", self._regenerate)
+        tools.addAction(style.standardIcon(SP.SP_DirOpenIcon), "Open Logs Folder", open_logs_folder)
+        tools.addAction(style.standardIcon(SP.SP_FileDialogDetailedView), "Copy Connection Details", self._copy_details)
 
         options = bar.addMenu("&Options")
         self.autostart_action = options.addAction("Start Automatically When I Sign In")
@@ -261,7 +267,7 @@ class LauncherWindow(QtWidgets.QMainWindow):
         self.verbose_action.toggled.connect(set_verbose_logging)
 
         help_menu = bar.addMenu("&Help")
-        help_menu.addAction("About KeyBridge", self._about)
+        help_menu.addAction(style.standardIcon(SP.SP_MessageBoxInformation), "About KeyBridge", self._about)
 
     def _about(self) -> None:
         QtWidgets.QMessageBox.about(
