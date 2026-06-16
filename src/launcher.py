@@ -152,7 +152,7 @@ class ServerSignals(QtCore.QObject):
     errorOccurred = QtCore.Signal(str)
 
 
-class LauncherWindow(QtWidgets.QWidget):
+class LauncherWindow(QtWidgets.QMainWindow):
     def __init__(self, server: KeyBridgeServer) -> None:
         super().__init__()
         self.server = server
@@ -162,13 +162,12 @@ class LauncherWindow(QtWidgets.QWidget):
         self.setWindowTitle(APP_NAME)
         self.setMinimumWidth(440)
 
-        root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 24)
-        root.setSpacing(16)
+        self._build_menus()
 
-        self.title = QtWidgets.QLabel(APP_NAME)
-        self.title.setStyleSheet("font-size: 22px; font-weight: 600;")
-        root.addWidget(self.title)
+        central = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(central)
+        root.setContentsMargins(28, 20, 28, 24)
+        root.setSpacing(16)
 
         # Status line: a coloured dot + plain-language text (the text carries the meaning).
         status_row = QtWidgets.QHBoxLayout()
@@ -233,72 +232,51 @@ class LauncherWindow(QtWidgets.QWidget):
         self.help_box.setStyleSheet("font-size: 12px;")
         root.addWidget(self.help_box)
 
-        # Actions.
-        buttons = QtWidgets.QHBoxLayout()
-        copy_btn = QtWidgets.QPushButton("Copy connection details")
-        copy_btn.setToolTip("Copy the pairing details to share another way if you can't scan.")
-        copy_btn.clicked.connect(self._copy_details)
-        hide_btn = QtWidgets.QPushButton("Hide to tray")
-        hide_btn.clicked.connect(self.hide)
-        buttons.addWidget(copy_btn)
-        buttons.addStretch(1)
-        buttons.addWidget(hide_btn)
-        root.addLayout(buttons)
-
-        # Advanced (collapsed by default): power-user tools, tucked out of the simple path.
-        self.advanced_toggle = QtWidgets.QToolButton()
-        self.advanced_toggle.setText("Advanced")
-        self.advanced_toggle.setCheckable(True)
-        self.advanced_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        self.advanced_toggle.setArrowType(QtCore.Qt.RightArrow)
-        self.advanced_toggle.setAutoRaise(True)
-        self.advanced_toggle.toggled.connect(self._toggle_advanced)
-        root.addWidget(self.advanced_toggle)
-
-        self.advanced_panel = QtWidgets.QWidget()
-        adv = QtWidgets.QVBoxLayout(self.advanced_panel)
-        adv.setContentsMargins(8, 0, 8, 0)
-        adv.setSpacing(8)
-
-        self.autostart_check = QtWidgets.QCheckBox("Start automatically when I sign in")
-        self.autostart_check.setChecked(is_autostart_enabled())
-        self.autostart_check.toggled.connect(self._on_autostart_toggled)
-        if winreg is None:
-            self.autostart_check.setEnabled(False)
-            self.autostart_check.setToolTip("Available on Windows only.")
-        adv.addWidget(self.autostart_check)
-
-        self.verbose_check = QtWidgets.QCheckBox("Verbose logging (for troubleshooting)")
-        self.verbose_check.toggled.connect(set_verbose_logging)
-        adv.addWidget(self.verbose_check)
-
-        adv_buttons = QtWidgets.QHBoxLayout()
-        logs_btn = QtWidgets.QPushButton("Open logs folder")
-        logs_btn.clicked.connect(open_logs_folder)
-        regen_btn = QtWidgets.QPushButton("Regenerate pairing code")
-        regen_btn.setToolTip("Show a new code and invalidate the old one (re-pair your phone).")
-        regen_btn.clicked.connect(self._regenerate)
-        adv_buttons.addWidget(logs_btn)
-        adv_buttons.addWidget(regen_btn)
-        adv_buttons.addStretch(1)
-        adv.addLayout(adv_buttons)
-
-        self.advanced_panel.setVisible(False)
-        root.addWidget(self.advanced_panel)
-
+        self.setCentralWidget(central)
         self.update_status(self.server.client_count)
 
-    def _toggle_advanced(self, shown: bool) -> None:
-        self.advanced_toggle.setArrowType(QtCore.Qt.DownArrow if shown else QtCore.Qt.RightArrow)
-        self.advanced_panel.setVisible(shown)
-        self.adjustSize()
+    def _build_menus(self) -> None:
+        """A conventional menu bar — the standard, app-like home for secondary actions."""
+        bar = self.menuBar()
+
+        file_menu = bar.addMenu("&File")
+        file_menu.addAction("Hide to Tray", self.hide)
+        file_menu.addSeparator()
+        file_menu.addAction("Quit", self.request_quit)
+
+        tools = bar.addMenu("&Tools")
+        tools.addAction("Regenerate Pairing Code…", self._regenerate)
+        tools.addAction("Open Logs Folder", open_logs_folder)
+        tools.addAction("Copy Connection Details", self._copy_details)
+
+        options = bar.addMenu("&Options")
+        self.autostart_action = options.addAction("Start Automatically When I Sign In")
+        self.autostart_action.setCheckable(True)
+        self.autostart_action.setChecked(is_autostart_enabled())
+        self.autostart_action.toggled.connect(self._on_autostart_toggled)
+        if winreg is None:
+            self.autostart_action.setEnabled(False)
+        self.verbose_action = options.addAction("Verbose Logging (for troubleshooting)")
+        self.verbose_action.setCheckable(True)
+        self.verbose_action.toggled.connect(set_verbose_logging)
+
+        help_menu = bar.addMenu("&Help")
+        help_menu.addAction("About KeyBridge", self._about)
+
+    def _about(self) -> None:
+        QtWidgets.QMessageBox.about(
+            self, "About KeyBridge",
+            "KeyBridge turns your phone into a keyboard for this PC.\n\n"
+            "Scan the QR code with the KeyBridge app, on the same Wi-Fi network, to pair. "
+            "The pairing key travels only in the QR — never over the network.",
+        )
 
     def _on_autostart_toggled(self, enabled: bool) -> None:
         result = set_autostart(enabled)
         if result != enabled:  # the write failed; reflect the real state without re-triggering
-            self.autostart_check.blockSignals(True)
-            self.autostart_check.setChecked(result)
-            self.autostart_check.blockSignals(False)
+            self.autostart_action.blockSignals(True)
+            self.autostart_action.setChecked(result)
+            self.autostart_action.blockSignals(False)
 
     def reload_qr(self) -> None:
         # Load via QImage to bypass any pixmap cache after the QR file is rewritten.
