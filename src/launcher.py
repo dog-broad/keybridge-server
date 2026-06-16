@@ -29,9 +29,9 @@ import threading
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from config import LOG_CONFIG
 from server import KeyBridgeServer
 from utils.logger import setup_logger
+from utils.paths import logs_dir
 
 try:
     import winreg  # Windows only; autostart is a no-op elsewhere
@@ -45,14 +45,8 @@ SINGLE_INSTANCE_KEY = "keybridge-launcher-single-instance"
 _AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
-def logs_dir() -> str:
-    return os.path.abspath(LOG_CONFIG.get("log_dir", "logs"))
-
-
 def open_logs_folder() -> None:
-    path = logs_dir()
-    os.makedirs(path, exist_ok=True)
-    QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(path))
+    QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(logs_dir()))
 
 
 def set_verbose_logging(enabled: bool) -> None:

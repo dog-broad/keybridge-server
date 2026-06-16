@@ -33,6 +33,7 @@ from utils.connection_manager import ConnectionManager
 from utils.envelope import EnvelopeError, SeenChunks, build_ack, parse_envelope
 from utils.logger import get_logger
 from utils.message_handler import MessageHandler
+from utils.paths import qr_image_path
 from utils.qr_utils import generate_ascii_qr, generate_connection_qr, get_local_ip
 from utils.security import RateLimiter, SecurityManager
 
@@ -72,7 +73,9 @@ class KeyBridgeServer:
         )
 
         # The QR payload + saved image, computed once (pairing secret lives for this run).
-        self.connection_string, self.qr_path = generate_connection_qr(self.port, self.security_manager)
+        self.connection_string, self.qr_path = generate_connection_qr(
+            self.port, self.security_manager, save_path=qr_image_path()
+        )
 
         self._client_count = 0
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -103,7 +106,9 @@ class KeyBridgeServer:
     def regenerate_pairing(self) -> None:
         """Rotate the pairing secret and rebuild the QR. Old codes stop working."""
         self.security_manager.regenerate_pairing_secret()
-        self.connection_string, self.qr_path = generate_connection_qr(self.port, self.security_manager)
+        self.connection_string, self.qr_path = generate_connection_qr(
+            self.port, self.security_manager, save_path=qr_image_path()
+        )
 
     def _set_client_count(self, count: int) -> None:
         if count != self._client_count:
