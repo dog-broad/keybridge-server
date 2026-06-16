@@ -275,17 +275,20 @@ class _HideNotifier(QtCore.QObject):
 
 
 def main() -> int:
-    # Single instance: a second launch focuses the running one instead of starting again.
+    # Single instance: a second launch should not start a second server. QLockFile is
+    # QtCore-only, so it is safe before a QApplication exists. A 30s stale time lets a
+    # crashed instance's lock be reclaimed.
     lock = QtCore.QLockFile(QtCore.QDir.tempPath() + f"/{SINGLE_INSTANCE_KEY}.lock")
-    lock.setStaleLockTime(0)
+    lock.setStaleLockTime(30000)
     if not lock.tryLock(100):
         logger.info("KeyBridge is already running")
         return 0
 
-    if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
-        logger.warning("No system tray available; the window will stay open")
-
+    # LauncherApp creates the QApplication. QtWidgets statics (e.g. isSystemTrayAvailable)
+    # must not be called before it exists — doing so crashes the Windows platform plugin.
     launcher = LauncherApp()
+    if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+        logger.warning("No system tray available; the window stays open instead")
     return launcher.run()
 
 
