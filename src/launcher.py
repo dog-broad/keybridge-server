@@ -156,7 +156,8 @@ class LauncherWindow(QtWidgets.QMainWindow):
     def __init__(self, server: KeyBridgeServer) -> None:
         super().__init__()
         self.server = server
-        self._allow_close = False  # set true only on a real Quit
+        self._quitting = False  # true only when really exiting (menu / dialog Quit)
+        self._settings = QtCore.QSettings(APP_NAME, "Launcher")
         self._state = "waiting"    # waiting | connected | error
         self._error_text = ""
         self.setWindowTitle(APP_NAME)
@@ -270,6 +271,18 @@ class LauncherWindow(QtWidgets.QMainWindow):
         self.verbose_action.setCheckable(True)
         self.verbose_action.toggled.connect(set_verbose_logging)
 
+        options.addSeparator()
+        close_menu = options.addMenu("When I Close the Window")
+        self._close_group = QtGui.QActionGroup(self)
+        self._close_group.setExclusive(True)
+        for label, value in (("Ask Me Each Time", "ask"), ("Minimize to Tray", "tray"), ("Quit", "quit")):
+            act = close_menu.addAction(label)
+            act.setCheckable(True)
+            act.setData(value)
+            act.setChecked(self._close_behavior() == value)
+            self._close_group.addAction(act)
+        self._close_group.triggered.connect(lambda a: self._set_close_behavior(a.data()))
+
         help_menu = bar.addMenu("&Help")
         help_menu.addAction(style.standardIcon(SP.SP_MessageBoxInformation), "About KeyBridge", self._about)
 
@@ -362,17 +375,62 @@ class LauncherWindow(QtWidgets.QMainWindow):
         self.message_label.show()
         self._apply_theme()
 
-    def request_quit(self) -> None:
-        self._allow_close = True
-        self.close()
+    def _close_behavior(self) -> str:
+        return self._settings.value("closeBehavior", "ask")
 
-    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        # Closing the window hides to the tray; it must not silently stop the bridge.
-        if self._allow_close:
-            event.accept()
-            return
+    def _set_close_behavior(self, value: str) -> None:
+        self._settings.setValue("closeBehavior", value)
+        for act in self._close_group.actions():
+            if act.data() == value:
+                act.setChecked(True)
+
+    def request_quit(self) -> None:
+        # Really exit. quitOnLastWindowClosed is False (we live in the tray), so closing the
+        # window alone won't end the app — we must quit the application explicitly.
+        self._quitting = True
+        QtWidgets.QApplication.quit()
+
+    def _minimize_to_tray(self, event: QtGui.QCloseEvent) -> None:
         event.ignore()
         self.hide()
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        if self._quitting:
+            event.accept()
+            return
+
+        behavior = self._close_behavior()
+        if behavior == "tray":
+            self._minimize_to_tray(event)
+            return
+        if behavior == "quit":
+            event.ignore()
+            self.request_quit()
+            return
+
+        # Ask, and optionally remember the choice. Minimizing is the default (it's a
+        # background bridge); the X should never silently stop it without a say.
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Close KeyBridge")
+        box.setIcon(QtWidgets.QMessageBox.Question)
+        box.setText("KeyBridge can keep running in the background so your phone stays paired.")
+        box.setInformativeText("Minimize to the tray, or quit completely?")
+        tray_btn = box.addButton("Minimize to Tray", QtWidgets.QMessageBox.AcceptRole)
+        quit_btn = box.addButton("Quit", QtWidgets.QMessageBox.DestructiveRole)
+        box.setDefaultButton(tray_btn)
+        remember = QtWidgets.QCheckBox("Remember my choice")
+        box.setCheckBox(remember)
+        box.exec()
+
+        if box.clickedButton() is quit_btn:
+            if remember.isChecked():
+                self._set_close_behavior("quit")
+            event.ignore()
+            self.request_quit()
+        else:  # Minimize to tray (also the default if the dialog is dismissed)
+            if remember.isChecked():
+                self._set_close_behavior("tray")
+            self._minimize_to_tray(event)
 
 
 class LauncherApp:
@@ -403,7 +461,6 @@ class LauncherApp:
         self.tray.show()
 
         self._server_thread = threading.Thread(target=self.server.run, name="keybridge-server", daemon=True)
-        self._first_hide_notice_shown = False
 
     def _tray_icon(self, name: str, filled: bool) -> QtGui.QIcon:
         return make_icon(accent(name, palette_is_dark(self.app.palette())), filled)
@@ -429,35 +486,13 @@ class LauncherApp:
         self.tray.setToolTip(f"{APP_NAME} — not running")
         self._show_window()  # bring the problem to the user's attention
 
-    def notify_hidden_to_tray(self) -> None:
-        if not self._first_hide_notice_shown and QtWidgets.QSystemTrayIcon.supportsMessages():
-            self._first_hide_notice_shown = True
-            self.tray.showMessage(
-                APP_NAME, "Still running here. Click the tray icon to show it again.",
-                QtWidgets.QSystemTrayIcon.Information, 4000,
-            )
-
     def run(self) -> int:
         self._server_thread.start()
         self.window.show()
-        self.window.installEventFilter(_HideNotifier(self))
         code = self.app.exec()
         self.server.stop()
         self._server_thread.join(timeout=3)
         return code
-
-
-class _HideNotifier(QtCore.QObject):
-    """Shows the one-time 'still running in the tray' notice the first time the window hides."""
-
-    def __init__(self, launcher: "LauncherApp") -> None:
-        super().__init__()
-        self._launcher = launcher
-
-    def eventFilter(self, obj, event) -> bool:
-        if event.type() == QtCore.QEvent.Hide and not obj.isMinimized():
-            self._launcher.notify_hidden_to_tray()
-        return False
 
 
 def main() -> int:
