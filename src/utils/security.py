@@ -65,6 +65,17 @@ class SecurityManager:
         """The pairing secret encoded for the QR (URL-safe base64, no padding)."""
         return base64.urlsafe_b64encode(self._pairing_secret).decode("utf-8").rstrip("=")
 
+    def regenerate_pairing_secret(self) -> None:
+        """
+        Replace the pairing secret with a fresh random one (re-pairing).
+
+        The reassignment is atomic, so a connection deriving a key concurrently reads
+        either the old or the new secret cleanly. New scans must use the new QR; existing
+        connections keep the key they already derived until they reconnect.
+        """
+        self._pairing_secret = secrets.token_bytes(PAIRING_SECRET_BYTES)
+        logger.info("Pairing secret regenerated")
+
     def new_session_salt(self) -> bytes:
         """A fresh random salt for one connection."""
         return secrets.token_bytes(SESSION_SALT_BYTES)

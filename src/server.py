@@ -100,6 +100,11 @@ class KeyBridgeServer:
     def ascii_qr(self) -> str:
         return generate_ascii_qr(self.port, self.security_manager)
 
+    def regenerate_pairing(self) -> None:
+        """Rotate the pairing secret and rebuild the QR. Old codes stop working."""
+        self.security_manager.regenerate_pairing_secret()
+        self.connection_string, self.qr_path = generate_connection_qr(self.port, self.security_manager)
+
     def _set_client_count(self, count: int) -> None:
         if count != self._client_count:
             self._client_count = count

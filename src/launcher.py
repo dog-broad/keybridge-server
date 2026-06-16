@@ -22,18 +22,82 @@ tray icon reflects whether a device is connected — so you can always tell, at 
 whether something can type on this PC.
 """
 
+import logging
+import os
 import sys
 import threading
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from config import LOG_CONFIG
 from server import KeyBridgeServer
 from utils.logger import setup_logger
+
+try:
+    import winreg  # Windows only; autostart is a no-op elsewhere
+except ImportError:
+    winreg = None
 
 logger = setup_logger()
 
 APP_NAME = "KeyBridge"
 SINGLE_INSTANCE_KEY = "keybridge-launcher-single-instance"
+_AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def logs_dir() -> str:
+    return os.path.abspath(LOG_CONFIG.get("log_dir", "logs"))
+
+
+def open_logs_folder() -> None:
+    path = logs_dir()
+    os.makedirs(path, exist_ok=True)
+    QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(path))
+
+
+def set_verbose_logging(enabled: bool) -> None:
+    """Raise/lower the log level at runtime (the file handler already accepts DEBUG)."""
+    logging.getLogger("keybridge").setLevel(logging.DEBUG if enabled else logging.INFO)
+
+
+def _autostart_command() -> str:
+    """The command Windows should run at sign-in to relaunch the launcher."""
+    if getattr(sys, "frozen", False):  # packaged exe
+        return f'"{sys.executable}"'
+    # From source: prefer the windowless interpreter so no console flashes at sign-in.
+    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    exe = pythonw if os.path.exists(pythonw) else sys.executable
+    return f'"{exe}" "{os.path.abspath(__file__)}"'
+
+
+def is_autostart_enabled() -> bool:
+    if winreg is None:
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY) as key:
+            winreg.QueryValueEx(key, APP_NAME)
+            return True
+    except OSError:
+        return False
+
+
+def set_autostart(enabled: bool) -> bool:
+    """Enable/disable launch at sign-in. Returns the resulting state."""
+    if winreg is None:
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            if enabled:
+                winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, _autostart_command())
+            else:
+                try:
+                    winreg.DeleteValue(key, APP_NAME)
+                except OSError:
+                    pass
+        return enabled
+    except OSError as e:
+        logger.error(f"Could not update autostart: {e}")
+        return is_autostart_enabled()
 
 # Status accents as (light-theme, dark-theme) pairs — each chosen to keep good contrast
 # against that theme's window background. Meaning is also carried by text + icon shape,
@@ -181,7 +245,75 @@ class LauncherWindow(QtWidgets.QWidget):
         buttons.addWidget(hide_btn)
         root.addLayout(buttons)
 
+        # Advanced (collapsed by default): power-user tools, tucked out of the simple path.
+        self.advanced_toggle = QtWidgets.QToolButton()
+        self.advanced_toggle.setText("Advanced")
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.advanced_toggle.setArrowType(QtCore.Qt.RightArrow)
+        self.advanced_toggle.setAutoRaise(True)
+        self.advanced_toggle.toggled.connect(self._toggle_advanced)
+        root.addWidget(self.advanced_toggle)
+
+        self.advanced_panel = QtWidgets.QWidget()
+        adv = QtWidgets.QVBoxLayout(self.advanced_panel)
+        adv.setContentsMargins(8, 0, 8, 0)
+        adv.setSpacing(8)
+
+        self.autostart_check = QtWidgets.QCheckBox("Start automatically when I sign in")
+        self.autostart_check.setChecked(is_autostart_enabled())
+        self.autostart_check.toggled.connect(self._on_autostart_toggled)
+        if winreg is None:
+            self.autostart_check.setEnabled(False)
+            self.autostart_check.setToolTip("Available on Windows only.")
+        adv.addWidget(self.autostart_check)
+
+        self.verbose_check = QtWidgets.QCheckBox("Verbose logging (for troubleshooting)")
+        self.verbose_check.toggled.connect(set_verbose_logging)
+        adv.addWidget(self.verbose_check)
+
+        adv_buttons = QtWidgets.QHBoxLayout()
+        logs_btn = QtWidgets.QPushButton("Open logs folder")
+        logs_btn.clicked.connect(open_logs_folder)
+        regen_btn = QtWidgets.QPushButton("Regenerate pairing code")
+        regen_btn.setToolTip("Show a new code and invalidate the old one (re-pair your phone).")
+        regen_btn.clicked.connect(self._regenerate)
+        adv_buttons.addWidget(logs_btn)
+        adv_buttons.addWidget(regen_btn)
+        adv_buttons.addStretch(1)
+        adv.addLayout(adv_buttons)
+
+        self.advanced_panel.setVisible(False)
+        root.addWidget(self.advanced_panel)
+
         self.update_status(self.server.client_count)
+
+    def _toggle_advanced(self, shown: bool) -> None:
+        self.advanced_toggle.setArrowType(QtCore.Qt.DownArrow if shown else QtCore.Qt.RightArrow)
+        self.advanced_panel.setVisible(shown)
+        self.adjustSize()
+
+    def _on_autostart_toggled(self, enabled: bool) -> None:
+        result = set_autostart(enabled)
+        if result != enabled:  # the write failed; reflect the real state without re-triggering
+            self.autostart_check.blockSignals(True)
+            self.autostart_check.setChecked(result)
+            self.autostart_check.blockSignals(False)
+
+    def reload_qr(self) -> None:
+        # Load via QImage to bypass any pixmap cache after the QR file is rewritten.
+        image = QtGui.QImage(self.server.qr_path)
+        if not image.isNull():
+            self.qr_label.setPixmap(
+                QtGui.QPixmap.fromImage(image).scaled(
+                    260, 260, QtCore.Qt.KeepAspectRatio, QtCore.Qt.FastTransformation
+                )
+            )
+
+    def _regenerate(self) -> None:
+        self.server.regenerate_pairing()
+        self.reload_qr()
+        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), "New code generated — rescan on your phone", self)
 
     def _muted(self) -> QtGui.QColor:
         """A de-emphasised but still readable text colour for the current theme."""
