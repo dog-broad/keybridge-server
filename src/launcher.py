@@ -256,13 +256,17 @@ class LauncherWindow(QtWidgets.QMainWindow):
         tools.addAction(style.standardIcon(SP.SP_FileDialogDetailedView), "Copy Connection Details", self._copy_details)
 
         options = bar.addMenu("&Options")
-        self.autostart_action = options.addAction("Start Automatically When I Sign In")
+        self.autostart_action = options.addAction(
+            style.standardIcon(SP.SP_ComputerIcon), "Start Automatically When I Sign In"
+        )
         self.autostart_action.setCheckable(True)
         self.autostart_action.setChecked(is_autostart_enabled())
         self.autostart_action.toggled.connect(self._on_autostart_toggled)
         if winreg is None:
             self.autostart_action.setEnabled(False)
-        self.verbose_action = options.addAction("Verbose Logging (for troubleshooting)")
+        self.verbose_action = options.addAction(
+            style.standardIcon(SP.SP_FileIcon), "Verbose Logging (for troubleshooting)"
+        )
         self.verbose_action.setCheckable(True)
         self.verbose_action.toggled.connect(set_verbose_logging)
 
