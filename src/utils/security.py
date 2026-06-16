@@ -15,298 +15,138 @@
 """
 Security Module
 
-This module handles authentication, token generation, and encryption for the KeyBridge server.
+Owns the host's pairing secret — the root of trust, generated fresh each run and
+shown only in the QR code, never sent over the network — and the per-session key
+derivation and AES-256-GCM encryption built on it.
+
+A client that scanned the QR holds the same pairing secret and derives the same
+per-session key from the salt the host sends in the handshake. Possession of that
+key is the client's authorization: a message that authenticates under it came from a
+paired client and was not tampered with. A message that does not authenticate is a
+hard error — the caller closes the connection; there is no plaintext fallback.
 """
 
+import base64
 import hashlib
 import hmac
-import json
 import secrets
 import time
-from typing import Dict, Any, Optional, Tuple
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from typing import Dict, List
+
 from cryptography.hazmat.backends import default_backend
-import base64
-import struct
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
 from .logger import get_logger
 
 logger = get_logger(__name__)
 
+PAIRING_SECRET_BYTES = 32   # 256-bit root secret
+SESSION_SALT_BYTES = 16
+NONCE_BYTES = 12            # AES-GCM nonce
+TAG_BYTES = 16             # AES-GCM tag
+
+
 class SecurityManager:
-    """Handles security operations including authentication and encryption."""
-    
-    def __init__(self, secret_key: str, enable_encryption: bool = True):
+    """Manages the pairing secret, per-session key derivation, and message encryption."""
+
+    def __init__(self, enable_encryption: bool = True) -> None:
         """
-        Initialize the security manager.
-        
         Args:
-            secret_key: Secret key for token signing and encryption
-            enable_encryption: Whether to enable message encryption
+            enable_encryption: When False, the host runs without encryption (local
+                testing only); no key is derived and messages are handled in plaintext.
         """
-        self.secret_key = secret_key.encode('utf-8')
         self.enable_encryption = enable_encryption
-        self._encryption_key = None
-        
+        # Random per host run. Delivered out-of-band via the QR; never transmitted.
+        self._pairing_secret = secrets.token_bytes(PAIRING_SECRET_BYTES)
         if enable_encryption:
-            # Derive encryption key from secret key using PBKDF2
-            kdf = PBKDF2HMAC(
-                algorithm=hashes.SHA256(),
-                length=32,  # 256-bit key for AES-256
-                salt=b'keybridge_salt',
-                iterations=100000,
-            )
-            self._encryption_key = kdf.derive(self.secret_key)
-            logger.info("AES-GCM encryption initialized")
-            logger.info(f"PBKDF2 key derivation:")
-            logger.info(f"Secret key: {self.secret_key.decode()}")
-            logger.info(f"Salt: keybridge_salt")
-            logger.info(f"Iterations: 100000")
-            logger.info(f"Key length: 32 bytes")
-            logger.info(f"Derived key (hex): {self._encryption_key.hex()}")
-    
-    def generate_connection_token(self, expiry_minutes: int = 60) -> Tuple[str, float]:
-        """
-        Generate a secure connection token for QR codes.
-        
-        Args:
-            expiry_minutes: Token expiry time in minutes
-            
-        Returns:
-            Tuple of (token, expiry_timestamp)
-        """
-        # Generate random token data
-        token_data = {
-            'id': secrets.token_hex(16),
-            'created': time.time(),
-            'expires': time.time() + (expiry_minutes * 60),
-            'nonce': secrets.token_hex(8)
-        }
-        
-        # Create token payload
-        payload = json.dumps(token_data, separators=(',', ':')).encode('utf-8')
-        
-        # Sign the token with HMAC
-        signature = hmac.new(
-            self.secret_key,
-            payload,
-            hashlib.sha256
-        ).hexdigest()
-        
-        # Combine payload and signature
-        token = base64.urlsafe_b64encode(payload).decode('utf-8') + '.' + signature
-        
-        logger.info(f"Generated connection token with ID: {token_data['id']}")
-        return token, token_data['expires']
-    
-    def validate_connection_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """
-        Validate a connection token.
-        
-        Args:
-            token: Token to validate
-            
-        Returns:
-            Token data if valid, None otherwise
-        """
-        try:
-            # Split token and signature
-            if '.' not in token:
-                logger.warning("Invalid token format - missing signature")
-                return None
-                
-            encoded_payload, signature = token.rsplit('.', 1)
-            
-            # Decode payload
-            payload = base64.urlsafe_b64decode(encoded_payload.encode('utf-8'))
-            
-            # Verify signature
-            expected_signature = hmac.new(
-                self.secret_key,
-                payload,
-                hashlib.sha256
-            ).hexdigest()
-            
-            if not hmac.compare_digest(signature, expected_signature):
-                logger.warning("Token signature verification failed")
-                return None
-            
-            # Parse token data
-            token_data = json.loads(payload.decode('utf-8'))
-            
-            # Check expiry
-            if time.time() > token_data['expires']:
-                logger.warning(f"Token expired: {token_data['id']}")
-                return None
-            
-            logger.info(f"Token validated successfully: {token_data['id']}")
-            return token_data
-            
-        except Exception as e:
-            logger.error(f"Token validation error: {str(e)}")
-            return None
-    
-    def encrypt_message(self, message: str) -> str:
-        """
-        Encrypt a message using AES-GCM if encryption is enabled.
-        
-        Args:
-            message: Message to encrypt
-            
-        Returns:
-            Encrypted message or original message if encryption disabled
-        """
-        if not self.enable_encryption or not self._encryption_key:
-            return message
-        
-        try:
-            # Generate random nonce (12 bytes for GCM)
-            nonce = secrets.token_bytes(12)
-            
-            # Encrypt using AES-GCM
-            cipher = Cipher(
-                algorithms.AES(self._encryption_key),
-                modes.GCM(nonce),
-                backend=default_backend()
-            )
-            encryptor = cipher.encryptor()
-            
-            # Encrypt the message
-            ciphertext = encryptor.update(message.encode('utf-8'))
-            encryptor.finalize()  # Finalize to make tag available
-            
-            # Get the authentication tag
-            tag = encryptor.tag
-            
-            # Combine nonce + ciphertext + tag (matching Android format)
-            encrypted_data = nonce + ciphertext + tag
-            
-            # Encode as base64
-            return base64.urlsafe_b64encode(encrypted_data).decode('utf-8')
-        except Exception as e:
-            logger.error(f"Message encryption failed: {str(e)}")
-            return message
-    
-    def decrypt_message(self, encrypted_message: str) -> Optional[str]:
-        """
-        Decrypt a message using AES-GCM if encryption is enabled.
-        
-        Args:
-            encrypted_message: Message to decrypt
-            
-        Returns:
-            Decrypted message or None if decryption failed
-        """
-        if not self.enable_encryption or not self._encryption_key:
-            return encrypted_message
-        
-        try:
-            # Android encodes without base64 padding; restore it before decoding.
-            missing_padding = len(encrypted_message) % 4
-            if missing_padding:
-                encrypted_message = encrypted_message + '=' * (4 - missing_padding)
+            logger.info("Pairing secret generated for this session")
 
-            encrypted_data = base64.urlsafe_b64decode(encrypted_message.encode('utf-8'))
+    def pairing_secret_b64(self) -> str:
+        """The pairing secret encoded for the QR (URL-safe base64, no padding)."""
+        return base64.urlsafe_b64encode(self._pairing_secret).decode("utf-8").rstrip("=")
 
-            # Layout matches the client: nonce (12 bytes) + ciphertext + tag (16 bytes).
-            if len(encrypted_data) < 28:  # 12 (nonce) + 0 (ciphertext) + 16 (tag)
-                raise ValueError("Encrypted data too short")
+    def new_session_salt(self) -> bytes:
+        """A fresh random salt for one connection."""
+        return secrets.token_bytes(SESSION_SALT_BYTES)
 
-            nonce = encrypted_data[:12]
-            tag = encrypted_data[-16:]
-            ciphertext = encrypted_data[12:-16]
+    def derive_session_key(self, salt: bytes) -> bytes:
+        """
+        Derive this connection's AES-256 key: HMAC-SHA256(pairing_secret, salt).
 
-            # Decrypt using AES-GCM with separate tag
-            cipher = Cipher(
-                algorithms.AES(self._encryption_key),
-                modes.GCM(nonce, tag),
-                backend=default_backend()
-            )
-            decryptor = cipher.decryptor()
+        Distinct per connection (the salt is fresh each time) and identical to what a
+        client holding the same pairing secret derives from the same salt.
+        """
+        return hmac.new(self._pairing_secret, salt, hashlib.sha256).digest()
 
-            decrypted = decryptor.update(ciphertext) + decryptor.finalize()
-            return decrypted.decode('utf-8')
-        except Exception as e:
-            # Never log the payload or key material; a one-line cause is enough.
-            logger.error(f"Message decryption failed: {type(e).__name__}: {e}")
-            return None
-    
+    def encrypt(self, message: str, key: bytes) -> str:
+        """Encrypt with AES-256-GCM under the session key; return URL-safe base64 (no padding)."""
+        nonce = secrets.token_bytes(NONCE_BYTES)
+        cipher = Cipher(algorithms.AES(key), modes.GCM(nonce), backend=default_backend())
+        encryptor = cipher.encryptor()
+        ciphertext = encryptor.update(message.encode("utf-8"))
+        encryptor.finalize()
+        data = nonce + ciphertext + encryptor.tag
+        return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+    def decrypt(self, token: str, key: bytes) -> str:
+        """
+        Decrypt and authenticate a message under the session key.
+
+        Raises:
+            Exception: on any failure (bad base64, wrong key, tampered ciphertext). The
+                caller must treat this as a hard error and close the connection — there
+                is deliberately no plaintext fallback.
+        """
+        # Drop all whitespace: some base64 encoders (Android's) wrap lines every 76 chars,
+        # and the client omits padding — restore both before decoding.
+        cleaned = "".join(token.split())
+        padding = (-len(cleaned)) % 4
+        raw = base64.urlsafe_b64decode(cleaned + ("=" * padding))
+        if len(raw) < NONCE_BYTES + TAG_BYTES:
+            raise ValueError("ciphertext too short")
+        nonce = raw[:NONCE_BYTES]
+        tag = raw[-TAG_BYTES:]
+        ciphertext = raw[NONCE_BYTES:-TAG_BYTES]
+        cipher = Cipher(algorithms.AES(key), modes.GCM(nonce, tag), backend=default_backend())
+        decryptor = cipher.decryptor()
+        plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+        return plaintext.decode("utf-8")
+
     def hash_client_identifier(self, identifier: str) -> str:
-        """
-        Create a hash of client identifier for rate limiting.
-        
-        Args:
-            identifier: Client identifier (usually IP address)
-            
-        Returns:
-            Hashed identifier
-        """
-        return hashlib.sha256(f"{identifier}:{self.secret_key.decode()}".encode()).hexdigest()[:16]
+        """A short, stable key for rate-limiting (anonymizes the raw IP in the map)."""
+        return hashlib.sha256(identifier.encode("utf-8")).hexdigest()[:16]
+
 
 class RateLimiter:
-    """Simple rate limiter for connection and command throttling."""
-    
-    def __init__(self, max_requests: int = 100, window_minutes: int = 1):
-        """
-        Initialize rate limiter.
-        
-        Args:
-            max_requests: Maximum requests allowed in window
-            window_minutes: Time window in minutes
-        """
+    """Sliding-window rate limiter, bounded: clients with no recent requests are evicted."""
+
+    def __init__(self, max_requests: int = 100, window_minutes: int = 1) -> None:
         self.max_requests = max_requests
         self.window_seconds = window_minutes * 60
-        self.requests: Dict[str, list] = {}
-    
+        self.requests: Dict[str, List[float]] = {}
+
     def is_allowed(self, client_id: str) -> bool:
-        """
-        Check if client is allowed to make a request.
-        
-        Args:
-            client_id: Client identifier
-            
-        Returns:
-            True if allowed, False if rate limited
-        """
         now = time.time()
-        
-        # Initialize client request history
-        if client_id not in self.requests:
-            self.requests[client_id] = []
-        
-        # Remove old requests outside the window
-        self.requests[client_id] = [
-            req_time for req_time in self.requests[client_id]
-            if now - req_time < self.window_seconds
-        ]
-        
-        # Check if under limit
-        if len(self.requests[client_id]) >= self.max_requests:
-            logger.warning(f"Rate limit exceeded for client: {client_id}")
+        recent = [t for t in self.requests.get(client_id, []) if now - t < self.window_seconds]
+        if len(recent) >= self.max_requests:
+            self.requests[client_id] = recent
+            logger.warning("Rate limit exceeded for a client")
             return False
-        
-        # Record this request
-        self.requests[client_id].append(now)
+        recent.append(now)
+        self.requests[client_id] = recent
+        self._evict_idle(now)
         return True
-    
-    def get_remaining_requests(self, client_id: str) -> int:
-        """
-        Get remaining requests for a client.
-        
-        Args:
-            client_id: Client identifier
-            
-        Returns:
-            Number of remaining requests
-        """
-        if client_id not in self.requests:
-            return self.max_requests
-        
-        now = time.time()
-        recent_requests = [
-            req_time for req_time in self.requests[client_id]
-            if now - req_time < self.window_seconds
+
+    def _evict_idle(self, now: float) -> None:
+        """Drop clients whose requests have all aged out, so the map can't grow unbounded."""
+        idle = [
+            cid for cid, times in self.requests.items()
+            if not times or now - times[-1] >= self.window_seconds
         ]
-        
-        return max(0, self.max_requests - len(recent_requests))
+        for cid in idle:
+            del self.requests[cid]
+
+    def get_remaining_requests(self, client_id: str) -> int:
+        now = time.time()
+        recent = [t for t in self.requests.get(client_id, []) if now - t < self.window_seconds]
+        return max(0, self.max_requests - len(recent))

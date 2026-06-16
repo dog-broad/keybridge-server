@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import base64
 import json
 import signal
 import sys
@@ -33,24 +34,18 @@ from config import SERVER_CONFIG, SECURITY_CONFIG, PERFORMANCE_CONFIG
 # Initialize logger
 logger = setup_logger()
 
-# Initialize security manager
-security_manager = None
-rate_limiter = None
-if SECURITY_CONFIG.get('enable_authentication', True):
-    security_manager = SecurityManager(
-        secret_key=SECURITY_CONFIG.get('secret_key', 'default-secret-key'),
-        enable_encryption=SECURITY_CONFIG.get('enable_encryption', True)
-    )
-    rate_limiter = RateLimiter(
-        max_requests=SECURITY_CONFIG.get('rate_limit_per_minute', 100),
-        window_minutes=1
-    )
-    security_features = ["Authentication", "Rate limiting"]
-    if SECURITY_CONFIG.get('enable_encryption', True):
-        security_features.append("Encryption")
-    logger.info(f"Security features enabled: {', '.join(security_features)}")
+# Initialize security manager (owns the pairing secret) and rate limiter.
+security_manager = SecurityManager(
+    enable_encryption=SECURITY_CONFIG.get('enable_encryption', True)
+)
+rate_limiter = RateLimiter(
+    max_requests=SECURITY_CONFIG.get('rate_limit_per_minute', 300),
+    window_minutes=1
+)
+if security_manager.enable_encryption:
+    logger.info("Encryption enabled (per-session key from the QR pairing secret); rate limiting enabled")
 else:
-    logger.warning("Security features disabled - running in legacy mode")
+    logger.warning("Encryption disabled - running in local plaintext mode")
 
 # Initialize message handler and connection manager
 message_handler = MessageHandler()
@@ -69,171 +64,114 @@ async def handle_connection(websocket: WebSocketServerProtocol) -> None:
     client_address = websocket.remote_address
     client_ip = client_address[0] if client_address else "unknown"
     logger.info(f"New connection from {client_address}")
-    
-    # Track authentication state
-    is_authenticated = not SECURITY_CONFIG.get('enable_authentication', True)
-    auth_attempts = 0
-    client_id = security_manager.hash_client_identifier(client_ip) if security_manager else client_ip
+
+    client_id = security_manager.hash_client_identifier(client_ip)
+    encryption_on = security_manager.enable_encryption
+    session_key = None
 
     # Per-connection record of applied chunks, for idempotent client retries.
     seen_chunks = SeenChunks()
-    
+
+    def reply(text: str) -> str:
+        """Encrypt an outbound message under the session key when encryption is on."""
+        return security_manager.encrypt(text, session_key) if encryption_on else text
+
     try:
-        # Add connection to manager and get session ID
         session_id = await connection_manager.add_connection(websocket)
-        
-        # Send initial handshake message
+
+        # Handshake (plaintext): carries the per-connection salt. Both sides derive the
+        # session key from it and the QR pairing secret; everything after is encrypted.
         handshake_msg = {
             "type": "handshake",
             "protocol_version": "2.0",
             "features": {
-                "authentication": SECURITY_CONFIG.get('enable_authentication', True),
-                "encryption": SECURITY_CONFIG.get('enable_encryption', True),
-                "compression": PERFORMANCE_CONFIG.get('enable_compression', True)
+                "encryption": encryption_on,
+                "compression": PERFORMANCE_CONFIG.get('enable_compression', True),
             },
-            "session_id": session_id
+            "session_id": session_id,
         }
+        if encryption_on:
+            salt = security_manager.new_session_salt()
+            session_key = security_manager.derive_session_key(salt)
+            handshake_msg["salt"] = base64.urlsafe_b64encode(salt).decode("utf-8").rstrip("=")
         await websocket.send(json.dumps(handshake_msg))
-        
+
         async for message in websocket:
             try:
-                # Rate limiting check
-                if rate_limiter and not rate_limiter.is_allowed(client_id):
+                # WebSocket-level ping frame.
+                if isinstance(message, bytes) and message.startswith(b'\x89'):
+                    await websocket.pong(message[1:] if len(message) > 1 else b'')
+                    continue
+
+                # Rate limiting. Sent as a plaintext notice the client treats as transient.
+                if not rate_limiter.is_allowed(client_id):
                     await websocket.send(json.dumps({
                         "status": "error",
                         "message": "Rate limit exceeded. Please slow down.",
-                        "code": "RATE_LIMIT_EXCEEDED"
+                        "code": "RATE_LIMIT_EXCEEDED",
                     }))
                     continue
-                
-                # Update last activity timestamp
+
                 connection_manager.update_activity(websocket)
-                
-                # Handle ping messages
-                if isinstance(message, bytes) and message.startswith(b'\x89'):  # WebSocket ping frame
-                    logger.debug(f"Received ping from {client_address}")
-                    await websocket.pong(message[1:] if len(message) > 1 else b'')
-                    continue
-                
-                # Decrypt message if encryption is enabled and client is authenticated
-                if security_manager and security_manager.enable_encryption and is_authenticated:
-                    # Strip newlines and whitespace that may be added during WebSocket transmission
-                    clean_message = message.strip().replace('\n', '').replace('\r', '')
-                    decrypted_message = security_manager.decrypt_message(clean_message)
-                    if decrypted_message is None:
-                        # Try processing as plain text (backward compatibility)
-                        logger.debug("Decryption failed, falling back to plain text")
-                        decrypted_message = message
+
+                # Decrypt. A message that does not authenticate under the session key did
+                # not come from a paired client (or was tampered with) — a hard error: we
+                # close the connection rather than fall back to plaintext.
+                if encryption_on:
+                    try:
+                        decrypted_message = security_manager.decrypt(message, session_key)
+                    except Exception:
+                        logger.warning(f"Undecryptable message from {client_address}; closing connection")
+                        await websocket.close(1008, "authentication failed")
+                        return
                 else:
                     decrypted_message = message
-                
-                # Parse message
+
                 try:
                     message_data = json.loads(decrypted_message)
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse JSON message: {e}")
-                    await websocket.send(json.dumps({
-                        "status": "error",
-                        "message": "Invalid JSON format"
-                    }))
+                    await websocket.send(reply(json.dumps({
+                        "status": "error", "message": "Invalid JSON format",
+                    })))
                     continue
-                
-                # Handle authentication
-                if not is_authenticated and message_data.get('command') == 'authenticate':
-                    auth_attempts += 1
-                    if auth_attempts > SECURITY_CONFIG.get('max_auth_attempts', 3):
-                        logger.warning(f"Too many authentication attempts from {client_address}")
-                        await websocket.close(1008, "Too many authentication attempts")
-                        return
-                    
-                    token = message_data.get('token')
-                    
-                    if security_manager and security_manager.validate_connection_token(token):
-                        is_authenticated = True
-                        response = {
-                            'status': 'success',
-                            'message': 'Authentication successful',
-                            'session_id': session_id
-                        }
-                        logger.info(f"Client {client_address} authenticated successfully")
-                    else:
-                        response = {
-                            'status': 'error',
-                            'message': 'Authentication failed',
-                            'attempts_remaining': SECURITY_CONFIG.get('max_auth_attempts', 3) - auth_attempts
-                        }
-                        logger.warning(f"Authentication failed for {client_address}")
-                    
-                    # Authentication response sent as plain text
-                    response_json = json.dumps(response)
-                    await websocket.send(response_json)
-                    continue
-                
-                # Reject unauthenticated commands (except ping)
-                if not is_authenticated and message_data.get('command') != 'ping':
-                    await websocket.send(json.dumps({
-                        "status": "error",
-                        "message": "Authentication required",
-                        "code": "AUTHENTICATION_REQUIRED"
-                    }))
-                    continue
-                
-                # Handle custom ping command for keep-alive
+
+                # Keep-alive ping.
                 if message_data.get('command') == 'ping':
-                    logger.debug(f"Received keep-alive ping from {client_address}")
-                    # Extend the idle timeout for this connection
                     connection_manager.extend_idle_timeout(websocket, extension_seconds=300)
-                    # Send pong response
                     pong_response = {
-                        'status': 'success',
-                        'message': 'pong',
-                        'timestamp': message_data.get('timestamp', 0),
-                        'server_time': time.time()
+                        "status": "success",
+                        "message": "pong",
+                        "timestamp": message_data.get('timestamp', 0),
+                        "server_time": time.time(),
                     }
-                    
-                    response_json = json.dumps(pong_response)
-                    if security_manager and security_manager.enable_encryption and is_authenticated:
-                        response_json = security_manager.encrypt_message(response_json)
-                    
-                    await websocket.send(response_json)
+                    await websocket.send(reply(json.dumps(pong_response)))
                     continue
-                
+
                 # Data plane: a versioned input envelope. Parse, apply, and ack.
                 try:
                     envelope = parse_envelope(message_data)
                 except EnvelopeError as e:
                     logger.warning(f"Rejected envelope from {client_address}: {e}")
                     if e.msg_id is not None and e.seq is not None:
-                        reply = build_ack(e.msg_id, e.seq, "error", str(e))
+                        err = build_ack(e.msg_id, e.seq, "error", str(e))
                     else:
-                        reply = {"status": "error", "message": str(e)}
-                    reply_json = json.dumps(reply)
-                    if security_manager and security_manager.enable_encryption and is_authenticated:
-                        reply_json = security_manager.encrypt_message(reply_json)
-                    await websocket.send(reply_json)
+                        err = {"status": "error", "message": str(e)}
+                    await websocket.send(reply(json.dumps(err)))
                     continue
 
                 ack = await message_handler.handle_envelope(envelope, seen_chunks)
-
-                ack_json = json.dumps(ack)
-                if security_manager and security_manager.enable_encryption and is_authenticated:
-                    ack_json = security_manager.encrypt_message(ack_json)
-                await websocket.send(ack_json)
+                await websocket.send(reply(json.dumps(ack)))
                 logger.debug(f"Acked {ack['id']}#{ack['seq']} -> {ack['status']}")
 
+            except websockets.exceptions.ConnectionClosed:
+                raise
             except Exception as e:
-                logger.error(f"Error processing message: {str(e)}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                error_response = json.dumps({
-                    "status": "error",
-                    "message": str(e)
-                })
-                
-                # Encrypt error response if needed
-                if security_manager and security_manager.enable_encryption:
-                    error_response = security_manager.encrypt_message(error_response)
-                
-                await websocket.send(error_response)
+                logger.error(f"Error processing message: {e}")
+                try:
+                    await websocket.send(reply(json.dumps({"status": "error", "message": str(e)})))
+                except Exception:
+                    pass
 
     except ConnectionRefusedError as e:
         logger.warning(f"Connection refused for {client_address}: {str(e)}")
@@ -286,10 +224,10 @@ async def main() -> None:
         print("\nASCII QR Code:")
         print(ascii_qr)
         print(f"Connection data length: {len(connection_string)} characters")
-        if security_manager:
-            print("🔒 Secure connection with authentication enabled")
+        if security_manager.enable_encryption:
+            print("Encrypted connection: scan the QR to pair (the key never leaves the QR).")
         else:
-            print("⚠️  Legacy connection mode (no authentication)")
+            print("Local plaintext mode (no encryption).")
         
         # Start the connection manager
         await connection_manager.start()

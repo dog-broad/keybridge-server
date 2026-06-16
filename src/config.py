@@ -33,14 +33,11 @@ SERVER_CONFIG: Dict[str, Any] = {
     'max_connections': int(os.getenv('MAX_CONNECTIONS', 10)),  # Maximum concurrent connections
 }
 
-# Security configuration
+# Security configuration. The encryption key is not configured here: the host generates
+# a random pairing secret each run and delivers it via the QR (see utils/security.py).
 SECURITY_CONFIG: Dict[str, Any] = {
-    'enable_authentication': os.getenv('ENABLE_AUTH', 'true').lower() == 'true',
-    'token_expiry_minutes': int(os.getenv('TOKEN_EXPIRY', 60)),  # QR tokens expire after 1 hour
-    'max_auth_attempts': int(os.getenv('MAX_AUTH_ATTEMPTS', 3)),
-    'rate_limit_per_minute': int(os.getenv('RATE_LIMIT', 300)),  # Max commands per minute per connection (increased for responsiveness, 100 is good)
+    'rate_limit_per_minute': int(os.getenv('RATE_LIMIT', 300)),  # Max commands per minute per connection
     'enable_encryption': os.getenv('ENABLE_ENCRYPTION', 'true').lower() == 'true',
-    'secret_key': os.getenv('SECRET_KEY', 'keybridge-secret-key-change-in-production'),
 }
 
 # Performance configuration
