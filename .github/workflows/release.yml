@@ -36,6 +36,8 @@ jobs:
         run: |
           # Approximate a Python-free machine: remove Python from PATH and run the bundled
           # exe (it carries its own interpreter). Confirm it stays up and serves on :8765.
+          # Headless runner has no real desktop, so use Qt's offscreen platform.
+          $env:QT_QPA_PLATFORM = "offscreen"
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Python' -and $_ -notmatch 'hostedtoolcache' }) -join ';'
           $p = Start-Process -FilePath "dist/KeyBridge/KeyBridge.exe" -PassThru
           $bound = $null
