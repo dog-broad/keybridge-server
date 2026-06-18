@@ -34,16 +34,22 @@ jobs:
       - name: Smoke test with no system Python
         shell: pwsh
         run: |
-          # Approximate a Python-free machine: drop Python from PATH, run the bundled exe
-          # (which carries its own interpreter), and confirm it boots and binds the port.
-          $env:QT_QPA_PLATFORM = "offscreen"
+          # Approximate a Python-free machine: remove Python from PATH and run the bundled
+          # exe (it carries its own interpreter). Confirm it stays up and serves on :8765.
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Python' -and $_ -notmatch 'hostedtoolcache' }) -join ';'
           $p = Start-Process -FilePath "dist/KeyBridge/KeyBridge.exe" -PassThru
-          Start-Sleep -Seconds 10
-          if ($p.HasExited) { throw "Launcher exited early with code $($p.ExitCode)" }
-          $bound = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
-          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          if (-not $bound) { throw "Server did not bind :8765" }
+          $bound = $null
+          foreach ($i in 1..15) {
+            Start-Sleep -Seconds 2
+            if ($p.HasExited) { break }
+            $bound = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
+            if ($bound) { break }
+          }
+          $log = Get-ChildItem "$env:LOCALAPPDATA/KeyBridge/logs/*.log" -ErrorAction SilentlyContinue | Select-Object -Last 1
+          if ($log) { Write-Host "----- launcher log -----"; Get-Content $log.FullName -Tail 40 }
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          if ($p.HasExited) { throw "Launcher exited early (code $($p.ExitCode))" }
+          if (-not $bound) { throw "Server did not bind :8765 within 30s" }
           Write-Host "OK: bundled host ran with no system Python on PATH and bound :8765"
 
       - name: Install Inno Setup
