@@ -31,7 +31,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from server import KeyBridgeServer
 from utils.logger import setup_logger
-from utils.paths import logs_dir
+from utils.paths import logs_dir, resource_path
 
 try:
     import winreg  # Windows only; autostart is a no-op elsewhere
@@ -122,6 +122,11 @@ def blend(a: QtGui.QColor, b: QtGui.QColor, t: float) -> QtGui.QColor:
     )
 
 
+def brand_icon() -> QtGui.QIcon:
+    """The KeyBridge mark, for the window and taskbar (distinct from the state-coloured tray icon)."""
+    return QtGui.QIcon(resource_path("assets", "keybridge.png"))
+
+
 def make_icon(colour: QtGui.QColor, filled: bool) -> QtGui.QIcon:
     """A simple keyboard-key glyph in the status colour; 'filled' marks a connected device."""
     size = 64
@@ -155,6 +160,7 @@ class LauncherWindow(QtWidgets.QMainWindow):
         self._state = "waiting"    # waiting | connected | error
         self._error_text = ""
         self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(brand_icon())
         self.setMinimumWidth(440)
 
         self._build_menus()
@@ -431,6 +437,7 @@ class LauncherApp:
     def __init__(self) -> None:
         self.app = QtWidgets.QApplication(sys.argv)
         self.app.setApplicationName(APP_NAME)
+        self.app.setWindowIcon(brand_icon())
         self.app.setQuitOnLastWindowClosed(False)  # closing the window keeps us in the tray
 
         self.signals = ServerSignals()

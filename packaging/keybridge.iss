@@ -18,6 +18,7 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\{#AppExe}
+SetupIconFile=..\src\assets\keybridge.ico
 OutputDir=Output
 OutputBaseFilename={#AppName}-Setup
 Compression=lzma2
