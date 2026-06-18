@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach the installer to"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build bundle
+        run: pyinstaller packaging/keybridge.spec
+
+      - name: Smoke test with no system Python
+        shell: pwsh
+        run: |
+          # Approximate a Python-free machine: drop Python from PATH, run the bundled exe
+          # (which carries its own interpreter), and confirm it boots and binds the port.
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Python' -and $_ -notmatch 'hostedtoolcache' }) -join ';'
+          $p = Start-Process -FilePath "dist/KeyBridge/KeyBridge.exe" -PassThru
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) { throw "Launcher exited early with code $($p.ExitCode)" }
+          $bound = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (-not $bound) { throw "Server did not bind :8765" }
+          Write-Host "OK: bundled host ran with no system Python on PATH and bound :8765"
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Compile installer
+        run: iscc packaging/keybridge.iss
+
+      - name: Attach installer to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ inputs.tag || github.ref_name }}"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) { gh release create $tag --generate-notes }
+          gh release upload $tag packaging/Output/KeyBridge-Setup.exe --clobber
