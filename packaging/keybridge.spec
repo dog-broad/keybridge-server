@@ -14,8 +14,9 @@ a = Analysis(
     binaries=[],
     # Bundle the brand icon so the window/taskbar can load it at runtime.
     datas=[(os.path.join(_SRC, "assets"), "assets")],
-    # pynput loads its OS backend lazily, so PyInstaller can miss it without a hint.
-    hiddenimports=["pynput.keyboard._win32", "pynput.mouse._win32"],
+    # pynput loads its OS backend lazily, and qrcode imports its Pillow image factory
+    # lazily — PyInstaller can miss both without hints.
+    hiddenimports=["pynput.keyboard._win32", "pynput.mouse._win32", "PIL", "qrcode.image.pil"],
     hookspath=[],
     runtime_hooks=[],
     # Trim large Qt modules the launcher never uses, to keep the bundle smaller.
