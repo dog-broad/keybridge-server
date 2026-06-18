@@ -44,3 +44,14 @@ def logs_dir() -> str:
 
 def qr_image_path() -> str:
     return os.path.join(app_data_dir(), "connection_qr.png")
+
+
+def resource_path(*parts: str) -> str:
+    """Absolute path to a bundled read-only resource (e.g. the app icon).
+
+    When frozen, PyInstaller unpacks data files under ``sys._MEIPASS``; from source we
+    resolve relative to the ``src`` directory. So ``resource_path("assets", "keybridge.png")``
+    works in both flows.
+    """
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(base, *parts)

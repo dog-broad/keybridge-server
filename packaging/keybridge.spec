@@ -6,12 +6,14 @@ import os
 
 # Resolve paths relative to this spec file, so the build works from any working directory.
 _SRC = os.path.join(os.path.abspath(os.path.join(SPECPATH, "..")), "src")
+_ICON = os.path.join(_SRC, "assets", "keybridge.ico")
 
 a = Analysis(
     [os.path.join(_SRC, "launcher.py")],
     pathex=[_SRC],
     binaries=[],
-    datas=[],
+    # Bundle the brand icon so the window/taskbar can load it at runtime.
+    datas=[(os.path.join(_SRC, "assets"), "assets")],
     # pynput loads its OS backend lazily, so PyInstaller can miss it without a hint.
     hiddenimports=["pynput.keyboard._win32", "pynput.mouse._win32"],
     hookspath=[],
@@ -36,6 +38,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,            # windowed: no console flashes at launch
+    icon=_ICON,               # brand icon on the .exe
 )
 coll = COLLECT(
     exe,

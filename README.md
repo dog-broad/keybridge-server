@@ -1,248 +1,118 @@
-<div align="center">
+<p align="center">
+  <img src="docs/media/launcher.png" alt="KeyBridge Server — the desktop host that types for your phone" width="860">
+</p>
 
-# KeyBridge Server
+<p align="center">
+  Receives keystrokes from the KeyBridge phone app over your local network and types them
+  <br>on this computer — encrypted, authenticated, and acknowledged on arrival.
+</p>
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](https://github.com/dog-broad/keybridge-server)
-
-A secure WebSocket server that receives keyboard input from mobile devices and simulates typing on the host computer. Features end-to-end encryption and token-based authentication.
-
----
-
-### 📱 **This server requires the KeyBridge Android App**
-
-**[➡️ Get KeyBridge Android App](https://github.com/dog-broad/KeyBridge)**
-
-Both components work together to provide secure remote keyboard control.
+<p align="center">
+  <b>Desktop host.</b> Pairs with the Android client →
+  <a href="https://github.com/dog-broad/KeyBridge">KeyBridge</a>
+</p>
 
 ---
 
-</div>
+KeyBridge Server is the other half of KeyBridge: it runs on the machine you want to control,
+shows a QR code to pair, and applies the text, hotkeys, and media keys your phone sends as
+real input. It runs as a small windowed app that recedes to the system tray once a device is
+connected, so you can always tell at a glance whether something can type on this PC.
 
-## Features
+## Run it
 
-- **Secure WebSocket Server** for real-time communication
-- **AES-256-GCM Encryption** with a per-session key derived from a QR-delivered pairing secret
-- **Rate Limiting** to prevent abuse
-- **Keyboard Simulation** using pynput
-- **Comprehensive Logging** system
-- **Versioned message protocol** with per-chunk delivery acknowledgement
-- **Connection Management** with session tracking and keep-alive
-- **QR Code Generation** for easy mobile pairing
+**From source**
 
-## Requirements
-
-- Python 3.8 or higher
-- Windows 10/11 (or Linux/macOS with pynput support)
-
-## Setup
-
-1. Create and activate virtual environment:
 ```bash
-# Create virtual environment
 python -m venv venv
-
-# Activate virtual environment (Windows)
-.\venv\Scripts\activate
-
-# Activate virtual environment (Linux/macOS)
-source venv/bin/activate
-```
-
-2. Install dependencies:
-```bash
+venv\Scripts\activate          # Windows  (use: source venv/bin/activate on Linux/macOS)
 pip install -r requirements.txt
+python src/launcher.py
 ```
 
-3. Run the server:
+A window opens with a QR code. Scan it from the
+**[KeyBridge app](https://github.com/dog-broad/KeyBridge)** on a phone that's on the same
+Wi-Fi, and you're paired.
+
+> Prefer a terminal-only host with no window? `python src/main.py` runs the bridge and
+> prints the QR to the console.
+
+**As a double-click app (Windows)**
+
+The host packages into a self-contained Windows app — no Python required to run it:
+
 ```bash
-python src/main.py
+pyinstaller packaging/keybridge.spec        # -> dist/KeyBridge/KeyBridge.exe
+iscc packaging/keybridge.iss                # optional: -> an installer
 ```
 
-The server will start and display a QR code containing encrypted connection data. Scan this with the mobile app to establish a secure connection.
+## Pairing
 
-## Security Features
+<p align="center">
+  <img src="docs/media/pair.png" alt="The host showing a QR code next to the phone detecting it" width="760">
+</p>
 
-### Pairing and encryption
-- A fresh random **pairing secret** is generated each run and shown only in the QR code — it is never sent over the network and is not stored in the source.
-- Each connection derives its own key, `HMAC-SHA256(pairing_secret, salt)`, from a per-connection salt in the handshake.
-- **AES-256-GCM** for every message after the handshake, with a unique nonce per message.
-- Authorization is implicit: a message that does not authenticate under the session key is rejected and the connection is closed (no plaintext fallback).
-- See [PROTOCOL.md](PROTOCOL.md) for the exact scheme.
+The host generates a **fresh pairing secret every run** and shows it only inside the QR. The
+phone reads the address and the secret from the code — nothing secret is ever sent over the
+network, and there is no key stored in the source.
 
-### Rate Limiting
-- Configurable request limits per minute per connection; idle clients are evicted so the limiter map stays bounded.
+## Security model
 
-### Configuration
-Settings can be set via environment variables (e.g. in `src/.env`):
-```bash
-RATE_LIMIT=300
-ENABLE_ENCRYPTION=true   # set false only for local plaintext testing
-```
+- **Per-session key.** Each connection derives its own key, `HMAC-SHA256(pairing_secret, salt)`,
+  from a per-connection salt exchanged in the handshake. Different session, different key.
+- **AES-256-GCM** on every message after the handshake, with a unique nonce per message.
+- **Implicit authentication, no downgrade.** A message that doesn't authenticate under the
+  session key is rejected and the connection is closed. There is no plaintext fallback.
+- **Bounded per-client state.** Rate-limit and session tables evict idle clients, so a
+  high-churn or hostile peer can't grow memory without limit.
 
-There is no secret to configure — the pairing secret is generated automatically and delivered via the QR.
+See **[PROTOCOL.md](PROTOCOL.md)** for the exact scheme.
 
-## Message Protocol
+## Protocol
 
-Input travels in a small versioned envelope, and the server acknowledges every chunk it
-applies, so the client knows what landed. Long text is split into ordered chunks the
-client can track as progress. The full contract — envelope fields, input types, the
-acknowledgement shape, chunking, and idempotent retry — is specified in
-**[PROTOCOL.md](PROTOCOL.md)**.
-
-A `type` message, for example, looks like:
+Input arrives in a small versioned envelope; the server acknowledges every chunk it applies,
+so the client knows exactly what landed. Long text is split into ordered chunks the client
+tracks as progress.
 
 ```json
-{ "v": 1, "id": "…", "seq": 0, "total": 1, "type": "type",
-  "payload": { "text": "Hello, World!" } }
-```
-
-## Supported Keys
-
-The server supports the following special keys:
-
-### Navigation Keys
-- `backspace`, `tab`, `enter`, `space`
-- `esc`, `escape`
-
-### Modifier Keys
-- `shift`, `ctrl`, `alt`
-- `cmd`, `command`, `windows`, `win`
-
-### Arrow Keys
-- `up`, `down`, `left`, `right`
-
-### Function Keys
-- `f1` through `f12`
-
-### Extended Navigation
-- `home`, `end`, `page_up`, `page_down`
-- `insert`, `delete`
-
-### System Keys
-- `caps_lock`, `num_lock`, `scroll_lock`
-- `print_screen`, `prtsc`, `prtscr`
-- `pause`, `break`
-- `menu`, `apps`
-
-### Media Keys
-- `media_play_pause`, `media_next`, `media_previous`
-- `media_volume_up`, `media_volume_down`, `media_volume_mute`
-
-## Acknowledgements
-
-The server confirms each applied chunk with an `ack` that echoes the message `id` and
-chunk `seq`:
-
-```json
+// in
+{ "v": 1, "id": "…", "seq": 0, "total": 1, "type": "type", "payload": { "text": "Hello, world" } }
+// out
 { "v": 1, "type": "ack", "id": "…", "seq": 0, "status": "ok" }
 ```
 
-A failure to apply a chunk returns `"status": "error"` with a reason. See
-[PROTOCOL.md](PROTOCOL.md) for the full acknowledgement and retry semantics.
-
-## Project Structure
-
-```
-keybridge-server/
-├── src/
-│   ├── main.py                    # Main server script
-│   ├── config.py                  # Configuration settings
-│   └── utils/
-│       ├── __init__.py
-│       ├── commands.py            # Command definitions and validation
-│       ├── connection_manager.py  # WebSocket connection management
-│       ├── keyboard_controller.py # Keyboard simulation controller
-│       ├── logger.py              # Logging configuration
-│       ├── message_handler.py     # Message parsing and routing
-│       ├── qr_utils.py            # QR code generation utilities
-│       └── security.py            # Encryption and authentication
-├── logs/                          # Log files directory
-├── connection_qr.png              # Generated QR code image
-├── requirements.txt               # Python dependencies
-├── LICENSE                        # Apache License 2.0
-├── NOTICE                         # Third-party notices
-├── PROTOCOL.md                    # Wire protocol contract
-└── README.md                      # This file
-```
+The full contract — envelope fields, input types, acknowledgement shape, chunking, and
+idempotent retry — is in **[PROTOCOL.md](PROTOCOL.md)**.
 
 ## Configuration
 
-### Server Settings (config.py)
-```python
-SERVER_CONFIG = {
-    'host': '0.0.0.0',           # Listen on all interfaces
-    'port': 8765,                 # WebSocket port
-    'ping_interval': 20,          # Ping every 20 seconds
-    'ping_timeout': 20,           # Wait 20 seconds for pong
-    'idle_timeout': 600,          # Close idle connections after 10 min
-    'max_connections': 10,        # Maximum concurrent connections
-}
-```
+Optional, via environment variables (e.g. a `src/.env` file):
 
-### Performance Settings
-```python
-PERFORMANCE_CONFIG = {
-    'enable_compression': True,
-    'max_message_size': 1024,     # Max message size in bytes
-    'enable_metrics': True,
-}
-```
-
-## Troubleshooting
-
-### Server Won't Start
-- Check if port 8765 is already in use
-- Ensure Python 3.8+ is installed
-- Verify all dependencies are installed
-
-### Keys Not Working
-- Run the server with administrator privileges
-- Check if another app is capturing keyboard input
-- Verify the key name matches supported keys list
-
-### Connection Issues
-- Ensure firewall allows port 8765
-- Check both devices are on the same network
-- Regenerate QR code if token has expired
-
-### Encryption Errors
-- Verify same encryption key on server and client
-- Check system time synchronization
-- Enable debug logging to see detailed errors
-
-## Development
-
-### Git Workflow
-
-1. Create a new branch for features:
 ```bash
-git checkout -b feature/your-feature-name
+RATE_LIMIT=300            # messages per minute per connection
+ENABLE_ENCRYPTION=true    # set false only for local plaintext testing
 ```
 
-2. Make your changes and commit:
-```bash
-git add .
-git commit -m "Description of changes"
-```
+There is no secret to configure — it's generated each run and delivered through the QR.
+Logs and the generated QR are written under `%LOCALAPPDATA%\KeyBridge` when installed, or the
+working directory when run from source.
 
-3. Push changes:
-```bash
-git push origin feature/your-feature-name
-```
+## Built with
 
-### Running Tests
-```bash
-python -m pytest tests/
-```
+Python · `asyncio` + `websockets` · `pynput` for input · PySide6 for the window and tray ·
+PyInstaller + Inno Setup for the Windows build. Python 3.8+ (Windows; Linux/macOS where
+`pynput` is supported).
 
-### Versioning
+<details>
+<summary><b>Supported keys</b></summary>
 
-This project follows [Semantic Versioning](https://semver.org/).
+`backspace` `tab` `enter` `space` `esc` · `shift` `ctrl` `alt` `cmd`/`win` ·
+`up` `down` `left` `right` · `home` `end` `page_up` `page_down` `insert` `delete` ·
+`f1`–`f12` · `caps_lock` `num_lock` `scroll_lock` `print_screen` `pause` `menu` ·
+`media_play_pause` `media_next` `media_previous` `media_volume_up` `media_volume_down` `media_volume_mute`
+
+</details>
 
 ## License
 
-Apache License 2.0
-
-See the [LICENSE](LICENSE) file for details.
+[Apache License 2.0](LICENSE).
