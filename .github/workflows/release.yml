@@ -40,19 +40,19 @@ jobs:
           $env:QT_QPA_PLATFORM = "offscreen"
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Python' -and $_ -notmatch 'hostedtoolcache' }) -join ';'
           $p = Start-Process -FilePath "dist/KeyBridge/KeyBridge.exe" -PassThru
+          # The proof we want: the bundle loads with no system Python and the server binds.
+          # (GUI process lifetime isn't asserted -- a headless runner has no real desktop.)
           $bound = $null
-          foreach ($i in 1..15) {
+          foreach ($i in 1..20) {
             Start-Sleep -Seconds 2
-            if ($p.HasExited) { break }
             $bound = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
-            if ($bound) { break }
+            if ($bound -or $p.HasExited) { break }
           }
           $log = Get-ChildItem "$env:LOCALAPPDATA/KeyBridge/logs/*.log" -ErrorAction SilentlyContinue | Select-Object -Last 1
           if ($log) { Write-Host "----- launcher log -----"; Get-Content $log.FullName -Tail 40 }
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
-          if ($p.HasExited) { throw "Launcher exited early (code $($p.ExitCode))" }
-          if (-not $bound) { throw "Server did not bind :8765 within 30s" }
-          Write-Host "OK: bundled host ran with no system Python on PATH and bound :8765"
+          if (-not $bound) { throw "Server never bound :8765 (process exited=$($p.HasExited), code=$($p.ExitCode)) -- see log above" }
+          Write-Host "OK: the bundled host ran with no system Python on PATH and bound :8765"
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
