@@ -21,6 +21,7 @@ the application. Handles cross-platform differences between Windows, Mac, and Li
 """
 
 import platform
+import time
 from typing import Optional, Union, Any
 from pynput.keyboard import Controller, Key
 from .logger import get_logger
@@ -189,23 +190,33 @@ class KeyboardController:
         else:
             raise ValueError(f"Invalid key type: {type(key_input)}. Expected str or Key enum")
     
-    def type_text(self, text: str) -> None:
+    def type_text(self, text: str, delay_ms: int = 0) -> None:
         """
         Simulate typing the given text.
-        
+
+        Always runs off the asyncio event loop (in a worker thread), so the optional
+        per-character delay must not be applied on the loop thread. With ``delay_ms``
+        greater than zero the characters are typed one at a time with that pause
+        between them; otherwise the whole string is typed at once.
+
         Args:
-            text (str): The text to type
-            
+            text (str): The text to type.
+            delay_ms (int): Pause in milliseconds between characters (0 = full speed).
+
         Raises:
-            ValueError: If text is None or empty
+            ValueError: If text is None or empty.
         """
         if not text or not isinstance(text, str):
             raise ValueError("Text must be a non-empty string")
-            
+
         try:
-            logger.debug(f"Simulating typing: {text}")
-            self._keyboard.type(text)
-            logger.info(f"Successfully typed text: {text}")
+            if delay_ms > 0:
+                for char in text:
+                    self._keyboard.type(char)
+                    time.sleep(delay_ms / 1000.0)
+            else:
+                self._keyboard.type(text)
+            logger.debug(f"Typed {len(text)} characters (delay {delay_ms}ms)")
         except Exception as e:
             logger.error(f"Error while typing text: {str(e)}")
             raise

@@ -16,6 +16,7 @@ import logging
 import os
 from datetime import datetime
 from config import LOG_CONFIG
+from .paths import logs_dir
 
 class LoggerManager:
     """Singleton class to manage logger instance and configuration."""
@@ -45,10 +46,8 @@ class LoggerManager:
         if self._logger is not None:
             return self._logger
             
-        # Create logs directory if it doesn't exist
-        log_dir = LOG_CONFIG['log_dir']
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        # A writable logs directory (user app-data when packaged; cwd from source).
+        log_dir = logs_dir()
 
         # Create a logger
         logger = logging.getLogger('keybridge')
